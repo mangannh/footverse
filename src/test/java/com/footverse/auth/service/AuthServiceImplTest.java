@@ -5,10 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,9 +23,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import com.footverse.auth.dto.AuthResponse;
+import com.footverse.auth.dto.LoginRequest;
 import com.footverse.auth.dto.RegisterRequest;
 import com.footverse.auth.entity.RefreshToken;
 import com.footverse.auth.repository.RefreshTokenRepository;
+import com.footverse.common.exception.BusinessException;
 import com.footverse.common.exception.DuplicateResourceException;
 import com.footverse.common.security.JwtUtil;
 import com.footverse.common.util.TokenHasher;
@@ -64,6 +69,10 @@ class AuthServiceImplTest {
 
     private RegisterRequest request() {
         return new RegisterRequest("User@Example.com", "Password1", "Test User", "0912345678");
+    }
+
+    private LoginRequest loginRequest() {
+        return new LoginRequest("User@Example.com", "Password1");
     }
 
     private User savedUser() {
@@ -142,5 +151,113 @@ class AuthServiceImplTest {
                     assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
                 });
         verify(userService, never()).createUser(eq("user@example.com"), any(), any(), any());
+    }
+
+    /**
+     * A valid login (email matched case-insensitively, BCrypt password match, enabled account)
+     * issues a token pair and stores only the refresh-token hash.
+     */
+    @Test
+    void loginIssuesTokensForValidCredentials() {
+        User user = savedUser();
+        UserResponse userResponse = new UserResponse(1L, "user@example.com", "Test User", "0912345678",
+                null, Role.CUSTOMER, true, LocalDateTime.now(), LocalDateTime.now());
+        when(userService.findByEmail("user@example.com")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("Password1", "$2a$10$encoded")).thenReturn(true);
+        when(jwtUtil.createAccessToken("user@example.com")).thenReturn("access-token");
+        when(userService.toResponse(user)).thenReturn(userResponse);
+
+        AuthResponse response = authService.login(loginRequest());
+
+        assertThat(response.accessToken()).isEqualTo("access-token");
+        assertThat(response.tokenType()).isEqualTo("Bearer");
+        assertThat(response.expiresIn()).isEqualTo(ACCESS_TTL);
+        assertThat(response.user()).isEqualTo(userResponse);
+        assertThat(response.refreshToken()).isNotBlank();
+
+        ArgumentCaptor<RefreshToken> captor = ArgumentCaptor.forClass(RefreshToken.class);
+        verify(refreshTokenRepository).save(captor.capture());
+        RefreshToken stored = captor.getValue();
+        assertThat(stored.getUser()).isEqualTo(user);
+        assertThat(stored.getTokenHash()).isEqualTo(tokenHasher.hash(response.refreshToken()));
+        assertThat(stored.getExpiresAt()).isAfter(LocalDateTime.now());
+    }
+
+    /**
+     * A wrong password raises a 401 {@code INVALID_CREDENTIALS} and issues no token.
+     */
+    @Test
+    void loginWithWrongPasswordIsRejected() {
+        User user = savedUser();
+        when(userService.findByEmail("user@example.com")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("Password1", "$2a$10$encoded")).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.login(loginRequest()))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("INVALID_CREDENTIALS");
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+                });
+        verify(refreshTokenRepository, never()).save(any());
+    }
+
+    /**
+     * An unknown email raises a 401 {@code INVALID_CREDENTIALS} — indistinguishable from a wrong
+     * password — and issues no token.
+     */
+    @Test
+    void loginWithUnknownEmailIsRejected() {
+        when(userService.findByEmail("user@example.com")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> authService.login(loginRequest()))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("INVALID_CREDENTIALS");
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+                });
+        verify(refreshTokenRepository, never()).save(any());
+    }
+
+    /**
+     * A disabled account (valid credentials) raises a 401 {@code ACCOUNT_DISABLED} and issues no
+     * token.
+     */
+    @Test
+    void loginWithDisabledAccountIsRejected() {
+        User user = savedUser();
+        user.setEnabled(false);
+        when(userService.findByEmail("user@example.com")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("Password1", "$2a$10$encoded")).thenReturn(true);
+
+        assertThatThrownBy(() -> authService.login(loginRequest()))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("ACCOUNT_DISABLED");
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+                });
+        verify(refreshTokenRepository, never()).save(any());
+    }
+
+    /**
+     * Each login inserts a new refresh-token row (multi-device) with a distinct token — existing
+     * rows are never overwritten or deleted.
+     */
+    @Test
+    void eachLoginInsertsANewRefreshTokenRow() {
+        User user = savedUser();
+        UserResponse userResponse = new UserResponse(1L, "user@example.com", "Test User", "0912345678",
+                null, Role.CUSTOMER, true, LocalDateTime.now(), LocalDateTime.now());
+        when(userService.findByEmail("user@example.com")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("Password1", "$2a$10$encoded")).thenReturn(true);
+        when(jwtUtil.createAccessToken("user@example.com")).thenReturn("access-token");
+        when(userService.toResponse(user)).thenReturn(userResponse);
+
+        AuthResponse first = authService.login(loginRequest());
+        AuthResponse second = authService.login(loginRequest());
+
+        ArgumentCaptor<RefreshToken> captor = ArgumentCaptor.forClass(RefreshToken.class);
+        verify(refreshTokenRepository, times(2)).save(captor.capture());
+        List<RefreshToken> stored = captor.getAllValues();
+        assertThat(first.refreshToken()).isNotEqualTo(second.refreshToken());
+        assertThat(stored.get(0).getTokenHash()).isNotEqualTo(stored.get(1).getTokenHash());
+        verify(refreshTokenRepository, never()).delete(any());
+        verify(refreshTokenRepository, never()).deleteAll();
     }
 }

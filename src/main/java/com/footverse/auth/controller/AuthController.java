@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.footverse.auth.dto.AuthResponse;
+import com.footverse.auth.dto.LoginRequest;
 import com.footverse.auth.dto.RegisterRequest;
 import com.footverse.auth.service.AuthService;
 import com.footverse.common.dto.ApiResponse;
@@ -17,7 +18,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Authentication endpoints. This sprint task exposes registration only.
+ * Authentication endpoints. This sprint task exposes registration and login.
  */
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -37,5 +38,18 @@ public class AuthController {
     public ResponseEntity<ApiResponse<AuthResponse>> register(@Valid @RequestBody RegisterRequest request) {
         AuthResponse response = authService.register(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.created(response));
+    }
+
+    /**
+     * Authenticates a user and issues a new token pair.
+     *
+     * @param request the validated login payload
+     * @return {@code 200 OK} with the issued tokens and the authenticated user's profile
+     */
+    @Operation(summary = "Authenticate and obtain a JWT token pair")
+    @PostMapping("/login")
+    public ResponseEntity<ApiResponse<AuthResponse>> login(@Valid @RequestBody LoginRequest request) {
+        AuthResponse response = authService.login(request);
+        return ResponseEntity.ok(ApiResponse.ok(response));
     }
 }

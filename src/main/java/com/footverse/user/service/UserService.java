@@ -1,12 +1,14 @@
 package com.footverse.user.service;
 
+import java.util.Optional;
+
 import com.footverse.user.dto.UserResponse;
 import com.footverse.user.entity.User;
 
 /**
  * User-module façade for the operations other features need. It is the only entry point into
  * user data for cross-feature callers (architecture-spec §6/§7). Only the methods required by
- * registration are exposed in this sprint.
+ * registration and login are exposed in this sprint.
  */
 public interface UserService {
 
@@ -17,6 +19,14 @@ public interface UserService {
      * @return {@code true} if the email is taken
      */
     boolean existsByEmail(String email);
+
+    /**
+     * Finds an account by email.
+     *
+     * @param email the email to look up
+     * @return the matching user, if any
+     */
+    Optional<User> findByEmail(String email);
 
     /**
      * Checks whether an account with the given phone already exists.

@@ -57,14 +57,15 @@ class SecurityConfigTest {
     }
 
     /**
-     * A public auth endpoint passes security; with no controller yet it resolves to the
-     * routing-404 envelope (proving it was not blocked by security).
+     * A public auth endpoint passes security: an unauthenticated {@code POST /auth/login} is not
+     * blocked with 401 but reaches the controller, where the empty body fails request parsing and
+     * resolves to the enveloped 400 {@code VALIDATION_ERROR} (proving security let it through).
      */
     @Test
     void publicAuthEndpointPassesSecurity() throws Exception {
         mockMvc.perform(post("/api/v1/auth/login"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.errorCode").value("RESOURCE_NOT_FOUND"));
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
     }
 
     /**

@@ -6,14 +6,17 @@ import java.util.Base64;
 import java.util.Locale;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.footverse.auth.dto.AuthResponse;
+import com.footverse.auth.dto.LoginRequest;
 import com.footverse.auth.dto.RegisterRequest;
 import com.footverse.auth.entity.RefreshToken;
 import com.footverse.auth.repository.RefreshTokenRepository;
+import com.footverse.common.exception.BusinessException;
 import com.footverse.common.exception.DuplicateResourceException;
 import com.footverse.common.security.JwtUtil;
 import com.footverse.common.util.TokenHasher;
@@ -24,13 +27,19 @@ import com.footverse.user.service.UserService;
 /**
  * Default {@link AuthService} implementation. Registration validates uniqueness, creates the
  * user (through {@link UserService}), and issues an access token plus a rotating refresh token
- * whose SHA-256 hash is the only server-side copy.
+ * whose SHA-256 hash is the only server-side copy. Login verifies the BCrypt password and the
+ * {@code enabled} flag, then issues a fresh token pair — inserting a new refresh-token row on
+ * every login (multi-device) without overwriting existing ones.
  */
 @Service
 public class AuthServiceImpl implements AuthService {
 
     private static final int REFRESH_TOKEN_BYTES = 32;
     private static final String TOKEN_TYPE = "Bearer";
+    private static final String INVALID_CREDENTIALS_CODE = "INVALID_CREDENTIALS";
+    private static final String INVALID_CREDENTIALS_MESSAGE = "Invalid email or password";
+    private static final String ACCOUNT_DISABLED_CODE = "ACCOUNT_DISABLED";
+    private static final String ACCOUNT_DISABLED_MESSAGE = "Account is disabled";
 
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -82,6 +91,29 @@ public class AuthServiceImpl implements AuthService {
 
         String encodedPassword = passwordEncoder.encode(request.password());
         User user = userService.createUser(email, encodedPassword, request.fullName(), request.phone());
+
+        String accessToken = jwtUtil.createAccessToken(user.getEmail());
+        String rawRefreshToken = issueRefreshToken(user);
+        UserResponse userResponse = userService.toResponse(user);
+
+        return new AuthResponse(accessToken, rawRefreshToken, accessTokenTtlSeconds, TOKEN_TYPE, userResponse);
+    }
+
+    @Override
+    @Transactional
+    public AuthResponse login(LoginRequest request) {
+        String email = request.email().toLowerCase(Locale.ROOT);
+        User user = userService.findByEmail(email)
+                .orElseThrow(() -> new BusinessException(HttpStatus.UNAUTHORIZED,
+                        INVALID_CREDENTIALS_CODE, INVALID_CREDENTIALS_MESSAGE));
+        if (!passwordEncoder.matches(request.password(), user.getPassword())) {
+            throw new BusinessException(HttpStatus.UNAUTHORIZED,
+                    INVALID_CREDENTIALS_CODE, INVALID_CREDENTIALS_MESSAGE);
+        }
+        if (!user.isEnabled()) {
+            throw new BusinessException(HttpStatus.UNAUTHORIZED,
+                    ACCOUNT_DISABLED_CODE, ACCOUNT_DISABLED_MESSAGE);
+        }
 
         String accessToken = jwtUtil.createAccessToken(user.getEmail());
         String rawRefreshToken = issueRefreshToken(user);

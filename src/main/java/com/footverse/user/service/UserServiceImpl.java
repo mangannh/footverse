@@ -1,5 +1,7 @@
 package com.footverse.user.service;
 
+import java.util.Optional;
+
 import org.springframework.stereotype.Service;
 
 import com.footverse.user.dto.UserResponse;
@@ -24,6 +26,11 @@ public class UserServiceImpl implements UserService {
     @Override
     public boolean existsByEmail(String email) {
         return userRepository.existsByEmail(email);
+    }
+
+    @Override
+    public Optional<User> findByEmail(String email) {
+        return userRepository.findByEmail(email);
     }
 
     @Override
