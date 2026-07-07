@@ -142,6 +142,11 @@
                             <version>${mapstruct.version}</version>
                         </path>
                     </annotationProcessorPaths>
+                    <compilerArgs>
+                        <!-- Generate every MapStruct mapper as a Spring bean by default
+                             (architecture-spec §9), so feature mappers need not repeat it. -->
+                        <arg>-Amapstruct.defaultComponentModel=spring</arg>
+                    </compilerArgs>
                 </configuration>
             </plugin>
             <plugin>

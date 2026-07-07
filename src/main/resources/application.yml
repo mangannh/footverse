@@ -27,6 +27,17 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: false
 
+  mvc:
+    # Raise NoHandlerFoundException for unmapped endpoints so the GlobalExceptionHandler can
+    # render a unified 404 RESOURCE_NOT_FOUND envelope instead of Spring's default error page.
+    throw-exception-if-no-handler-found: true
+
+  web:
+    resources:
+      # Disable the default static-resource handler so unmapped paths raise
+      # NoHandlerFoundException instead of being handled as a missing static resource.
+      add-mappings: false
+
 # Externalized JWT settings. Secrets are never hardcoded in source code; the value is
 # supplied via the FOOTVERSE_JWT_SECRET environment variable (the default below is for
 # local development only and must be overridden outside development).
