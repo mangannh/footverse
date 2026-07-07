@@ -34,3 +34,8 @@ build/
 
 # Local Spring configuration
 src/main/resources/application-local.yml
+
+# Internal project documentation (not published to GitHub)
+docs/
+CLAUDE.md
+.claude/
