@@ -4,6 +4,7 @@ import java.util.Optional;
 
 import org.springframework.stereotype.Service;
 
+import com.footverse.common.security.CurrentUserProvider;
 import com.footverse.user.dto.UserResponse;
 import com.footverse.user.entity.Role;
 import com.footverse.user.entity.User;
@@ -14,7 +15,8 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * Default {@link UserService} implementation backed by {@link UserRepository} and
- * {@link UserMapper}.
+ * {@link UserMapper}. The current-user lookup reads the authenticated user through
+ * {@link CurrentUserProvider}, never the security context directly.
  */
 @Service
 @RequiredArgsConstructor
@@ -22,6 +24,12 @@ public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
     private final UserMapper userMapper;
+    private final CurrentUserProvider currentUserProvider;
+
+    @Override
+    public UserResponse getCurrentUser() {
+        return userMapper.toResponse(currentUserProvider.getCurrentUser());
+    }
 
     @Override
     public boolean existsByEmail(String email) {

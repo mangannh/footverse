@@ -24,11 +24,13 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 import com.footverse.auth.dto.AuthResponse;
 import com.footverse.auth.dto.LoginRequest;
+import com.footverse.auth.dto.RefreshTokenRequest;
 import com.footverse.auth.dto.RegisterRequest;
 import com.footverse.auth.entity.RefreshToken;
 import com.footverse.auth.repository.RefreshTokenRepository;
 import com.footverse.common.exception.BusinessException;
 import com.footverse.common.exception.DuplicateResourceException;
+import com.footverse.common.security.CurrentUserProvider;
 import com.footverse.common.security.JwtUtil;
 import com.footverse.common.util.TokenHasher;
 import com.footverse.user.dto.UserResponse;
@@ -57,6 +59,9 @@ class AuthServiceImplTest {
     @Mock
     private JwtUtil jwtUtil;
 
+    @Mock
+    private CurrentUserProvider currentUserProvider;
+
     private final TokenHasher tokenHasher = new TokenHasher();
 
     private AuthServiceImpl authService;
@@ -64,7 +69,7 @@ class AuthServiceImplTest {
     @BeforeEach
     void setUp() {
         authService = new AuthServiceImpl(userService, refreshTokenRepository, passwordEncoder, jwtUtil,
-                tokenHasher, ACCESS_TTL, REFRESH_TTL);
+                tokenHasher, currentUserProvider, ACCESS_TTL, REFRESH_TTL);
     }
 
     private RegisterRequest request() {
@@ -73,6 +78,20 @@ class AuthServiceImplTest {
 
     private LoginRequest loginRequest() {
         return new LoginRequest("User@Example.com", "Password1");
+    }
+
+    private User userWithId(Long id) {
+        User user = savedUser();
+        user.setId(id);
+        return user;
+    }
+
+    private RefreshToken refreshTokenRow(User user, String rawToken, LocalDateTime expiresAt) {
+        RefreshToken row = new RefreshToken();
+        row.setUser(user);
+        row.setTokenHash(tokenHasher.hash(rawToken));
+        row.setExpiresAt(expiresAt);
+        return row;
     }
 
     private User savedUser() {
@@ -258,6 +277,171 @@ class AuthServiceImplTest {
         assertThat(first.refreshToken()).isNotEqualTo(second.refreshToken());
         assertThat(stored.get(0).getTokenHash()).isNotEqualTo(stored.get(1).getTokenHash());
         verify(refreshTokenRepository, never()).delete(any());
+        verify(refreshTokenRepository, never()).deleteAll();
+    }
+
+    /**
+     * A valid refresh rotates the token: the old row is deleted and a new access/refresh pair is
+     * issued (canonical flow steps 7-12), with the new refresh hash differing from the old.
+     */
+    @Test
+    void refreshRotatesTokenForValidToken() {
+        User user = savedUser();
+        UserResponse userResponse = new UserResponse(1L, "user@example.com", "Test User", "0912345678",
+                null, Role.CUSTOMER, true, LocalDateTime.now(), LocalDateTime.now());
+        RefreshToken existing = refreshTokenRow(user, "old-refresh-token", LocalDateTime.now().plusDays(30));
+        when(refreshTokenRepository.findByTokenHash(tokenHasher.hash("old-refresh-token")))
+                .thenReturn(Optional.of(existing));
+        when(jwtUtil.createAccessToken("user@example.com")).thenReturn("new-access-token");
+        when(userService.toResponse(user)).thenReturn(userResponse);
+
+        AuthResponse response = authService.refresh(new RefreshTokenRequest("old-refresh-token"));
+
+        assertThat(response.accessToken()).isEqualTo("new-access-token");
+        assertThat(response.tokenType()).isEqualTo("Bearer");
+        assertThat(response.expiresIn()).isEqualTo(ACCESS_TTL);
+        assertThat(response.user()).isEqualTo(userResponse);
+        assertThat(response.refreshToken()).isNotBlank().isNotEqualTo("old-refresh-token");
+
+        verify(refreshTokenRepository).delete(existing);
+        ArgumentCaptor<RefreshToken> captor = ArgumentCaptor.forClass(RefreshToken.class);
+        verify(refreshTokenRepository).save(captor.capture());
+        RefreshToken inserted = captor.getValue();
+        assertThat(inserted.getUser()).isEqualTo(user);
+        assertThat(inserted.getTokenHash()).isEqualTo(tokenHasher.hash(response.refreshToken()));
+        assertThat(inserted.getTokenHash()).isNotEqualTo(existing.getTokenHash());
+        assertThat(inserted.getExpiresAt()).isAfter(LocalDateTime.now());
+    }
+
+    /**
+     * An unknown refresh token (no matching row) raises a 401 {@code REFRESH_TOKEN_INVALID} and
+     * neither deletes nor inserts a row. A rotated (reused) token hits this exact path.
+     */
+    @Test
+    void refreshWithUnknownTokenIsRejected() {
+        when(refreshTokenRepository.findByTokenHash(tokenHasher.hash("missing-token")))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> authService.refresh(new RefreshTokenRequest("missing-token")))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("REFRESH_TOKEN_INVALID");
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+                });
+        verify(refreshTokenRepository, never()).delete(any());
+        verify(refreshTokenRepository, never()).save(any());
+    }
+
+    /**
+     * An expired refresh token is deleted from the store and raises a 401
+     * {@code REFRESH_TOKEN_EXPIRED}; no new row is issued (canonical flow step 5).
+     */
+    @Test
+    void refreshWithExpiredTokenDeletesRowAndIsRejected() {
+        User user = savedUser();
+        RefreshToken existing = refreshTokenRow(user, "expired-token", LocalDateTime.now().minusSeconds(1));
+        when(refreshTokenRepository.findByTokenHash(tokenHasher.hash("expired-token")))
+                .thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> authService.refresh(new RefreshTokenRequest("expired-token")))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("REFRESH_TOKEN_EXPIRED");
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+                });
+        verify(refreshTokenRepository).delete(existing);
+        verify(refreshTokenRepository, never()).save(any());
+    }
+
+    /**
+     * A refresh for a disabled account is rejected with a 401 {@code ACCOUNT_DISABLED}; the row is
+     * left untouched (the delete at step 7 is never reached) and no new token is issued.
+     */
+    @Test
+    void refreshForDisabledAccountIsRejected() {
+        User user = savedUser();
+        user.setEnabled(false);
+        RefreshToken existing = refreshTokenRow(user, "disabled-user-token", LocalDateTime.now().plusDays(30));
+        when(refreshTokenRepository.findByTokenHash(tokenHasher.hash("disabled-user-token")))
+                .thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> authService.refresh(new RefreshTokenRequest("disabled-user-token")))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("ACCOUNT_DISABLED");
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+                });
+        verify(refreshTokenRepository, never()).delete(any());
+        verify(refreshTokenRepository, never()).save(any());
+    }
+
+    /**
+     * A logout by the token's owner deletes exactly that row (the caller's own token is revoked).
+     */
+    @Test
+    void logoutDeletesOwnPresentedToken() {
+        User user = userWithId(1L);
+        RefreshToken existing = refreshTokenRow(user, "device-token", LocalDateTime.now().plusDays(30));
+        when(refreshTokenRepository.findByTokenHash(tokenHasher.hash("device-token")))
+                .thenReturn(Optional.of(existing));
+        when(currentUserProvider.getCurrentUser()).thenReturn(user);
+
+        authService.logout(new RefreshTokenRequest("device-token"));
+
+        verify(refreshTokenRepository).delete(existing);
+    }
+
+    /**
+     * Logging out an unknown or already-revoked token (no matching row) is an idempotent no-op:
+     * it returns normally, deletes nothing, and never even consults the current user — so it
+     * cannot leak whether the token exists.
+     */
+    @Test
+    void logoutWithUnknownOrRevokedTokenIsNoOp() {
+        when(refreshTokenRepository.findByTokenHash(tokenHasher.hash("gone-token")))
+                .thenReturn(Optional.empty());
+
+        authService.logout(new RefreshTokenRequest("gone-token"));
+
+        verify(refreshTokenRepository, never()).delete(any());
+        verify(currentUserProvider, never()).getCurrentUser();
+    }
+
+    /**
+     * Logging out a refresh token owned by another user is rejected with 403
+     * {@code REFRESH_TOKEN_FORBIDDEN}, and the victim's row is left intact.
+     */
+    @Test
+    void logoutAnotherUsersTokenIsForbiddenAndKeepsRow() {
+        User owner = userWithId(1L);
+        User caller = userWithId(2L);
+        RefreshToken existing = refreshTokenRow(owner, "victim-token", LocalDateTime.now().plusDays(30));
+        when(refreshTokenRepository.findByTokenHash(tokenHasher.hash("victim-token")))
+                .thenReturn(Optional.of(existing));
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller);
+
+        assertThatThrownBy(() -> authService.logout(new RefreshTokenRequest("victim-token")))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("REFRESH_TOKEN_FORBIDDEN");
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                });
+        verify(refreshTokenRepository, never()).delete(any());
+    }
+
+    /**
+     * Logout revokes only the single presented token, never a bulk delete of the user's other
+     * devices.
+     */
+    @Test
+    void logoutRevokesOnlyThePresentedToken() {
+        User user = userWithId(1L);
+        RefreshToken presented = refreshTokenRow(user, "presented-token", LocalDateTime.now().plusDays(30));
+        when(refreshTokenRepository.findByTokenHash(tokenHasher.hash("presented-token")))
+                .thenReturn(Optional.of(presented));
+        when(currentUserProvider.getCurrentUser()).thenReturn(user);
+
+        authService.logout(new RefreshTokenRequest("presented-token"));
+
+        ArgumentCaptor<RefreshToken> captor = ArgumentCaptor.forClass(RefreshToken.class);
+        verify(refreshTokenRepository).delete(captor.capture());
+        assertThat(captor.getValue()).isEqualTo(presented);
         verify(refreshTokenRepository, never()).deleteAll();
     }
 }

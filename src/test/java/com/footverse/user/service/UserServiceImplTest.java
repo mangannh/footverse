@@ -12,6 +12,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDateTime;
+
+import com.footverse.common.security.CurrentUserProvider;
+import com.footverse.user.dto.UserResponse;
 import com.footverse.user.entity.Role;
 import com.footverse.user.entity.User;
 import com.footverse.user.mapper.UserMapper;
@@ -29,11 +33,33 @@ class UserServiceImplTest {
     @Mock
     private UserMapper userMapper;
 
+    @Mock
+    private CurrentUserProvider currentUserProvider;
+
     private UserServiceImpl userService;
 
     @BeforeEach
     void setUp() {
-        userService = new UserServiceImpl(userRepository, userMapper);
+        userService = new UserServiceImpl(userRepository, userMapper, currentUserProvider);
+    }
+
+    /**
+     * The current-user lookup resolves the caller via {@link CurrentUserProvider} and maps that
+     * exact user to its response — it never takes any argument.
+     */
+    @Test
+    void getCurrentUserMapsTheAuthenticatedCaller() {
+        User caller = new User();
+        caller.setId(7L);
+        caller.setEmail("caller@example.com");
+        UserResponse response = new UserResponse(7L, "caller@example.com", "Caller", "0912345678",
+                null, Role.CUSTOMER, true, LocalDateTime.now(), LocalDateTime.now());
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller);
+        when(userMapper.toResponse(caller)).thenReturn(response);
+
+        assertThat(userService.getCurrentUser()).isEqualTo(response);
+        verify(currentUserProvider).getCurrentUser();
+        verify(userMapper).toResponse(caller);
     }
 
     /**

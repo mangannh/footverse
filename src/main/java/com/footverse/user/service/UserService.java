@@ -8,9 +8,16 @@ import com.footverse.user.entity.User;
 /**
  * User-module façade for the operations other features need. It is the only entry point into
  * user data for cross-feature callers (architecture-spec §6/§7). Only the methods required by
- * registration and login are exposed in this sprint.
+ * registration, login, and the current-user endpoint are exposed in this sprint.
  */
 public interface UserService {
+
+    /**
+     * Returns the authenticated caller's own profile.
+     *
+     * @return the current user's {@link UserResponse}
+     */
+    UserResponse getCurrentUser();
 
     /**
      * Checks whether an account with the given email already exists.
