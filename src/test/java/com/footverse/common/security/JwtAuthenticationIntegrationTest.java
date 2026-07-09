@@ -108,13 +108,14 @@ class JwtAuthenticationIntegrationTest {
     }
 
     /**
-     * A public endpoint is reachable without any token.
+     * A public endpoint is reachable without any token: it reaches the product controller and, with
+     * no product persisted, resolves to the business {@code 404 PRODUCT_NOT_FOUND}.
      */
     @Test
     void publicEndpointDoesNotRequireToken() throws Exception {
         mockMvc.perform(get("/api/v1/products/1"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.errorCode").value("RESOURCE_NOT_FOUND"));
+                .andExpect(jsonPath("$.errorCode").value("PRODUCT_NOT_FOUND"));
     }
 
     /**

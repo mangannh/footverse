@@ -117,14 +117,16 @@ class RoleAuthorizationIntegrationTest {
     }
 
     /**
-     * An ADMIN token clears authorization on an admin product update, resolving to the routing-404
-     * envelope.
+     * An ADMIN token clears authorization on an admin product update and reaches the
+     * {@link com.footverse.product.controller.ProductController}; the empty body then fails request
+     * parsing and resolves to the enveloped {@code 400 VALIDATION_ERROR} — proving authorization
+     * passed rather than {@code 403}.
      */
     @Test
     void adminOnAdminProductUpdatePassesAuthorization() throws Exception {
         mockMvc.perform(put("/api/v1/products/1").header(HttpHeaders.AUTHORIZATION, adminToken()))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.errorCode").value("RESOURCE_NOT_FOUND"));
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
     }
 
     /**

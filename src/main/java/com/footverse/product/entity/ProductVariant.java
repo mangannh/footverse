@@ -1,0 +1,62 @@
+package com.footverse.product.entity;
+
+import java.math.BigDecimal;
+
+import com.footverse.common.entity.BaseEntity;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+
+import lombok.Getter;
+import lombok.Setter;
+
+/**
+ * A size-specific stock-keeping unit of a {@link Product}. Maps to the {@code product_variant}
+ * table (database-spec §10.8); audit timestamps are inherited from {@link BaseEntity}.
+ *
+ * <p>Owns its product via a unidirectional lazy {@code @ManyToOne}. The {@code sku} is unique and
+ * each {@code (product, size)} pair is unique. The effective selling price is
+ * {@link #priceOverride} when set, otherwise the owning product's {@code basePrice}.</p>
+ */
+@Getter
+@Setter
+@Entity
+@Table(name = "product_variant", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_product_variant_product_id_size", columnNames = {"product_id", "size"})
+})
+public class ProductVariant extends BaseEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "product_id", nullable = false)
+    private Product product;
+
+    @Column(nullable = false, length = 20)
+    private String size;
+
+    @Column(name = "stock_quantity", nullable = false)
+    private int stockQuantity;
+
+    @Column(nullable = false, unique = true, length = 64)
+    private String sku;
+
+    @Column(name = "price_override", precision = 12, scale = 2)
+    private BigDecimal priceOverride;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private ProductVariantStatus status;
+}

@@ -69,12 +69,14 @@ class SecurityConfigTest {
     }
 
     /**
-     * A public product GET passes security (resolves to routing-404, not 401).
+     * A public product GET passes security and reaches the controller: with no product persisted it
+     * resolves to the business {@code 404 PRODUCT_NOT_FOUND} (proving security let it through, not a
+     * {@code 401}).
      */
     @Test
     void publicProductGetPassesSecurity() throws Exception {
         mockMvc.perform(get("/api/v1/products/1"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.errorCode").value("RESOURCE_NOT_FOUND"));
+                .andExpect(jsonPath("$.errorCode").value("PRODUCT_NOT_FOUND"));
     }
 }
