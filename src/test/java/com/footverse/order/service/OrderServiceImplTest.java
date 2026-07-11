@@ -3,6 +3,8 @@ package com.footverse.order.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -14,20 +16,34 @@ import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 
 import com.footverse.address.service.AddressService;
 import com.footverse.cart.dto.CheckoutCartLine;
 import com.footverse.cart.service.CartService;
+import com.footverse.common.dto.PageResponse;
 import com.footverse.common.exception.BusinessException;
 import com.footverse.common.exception.ResourceNotFoundException;
 import com.footverse.common.security.CurrentUserProvider;
 import com.footverse.order.dto.CouponPreviewRequest;
 import com.footverse.order.dto.CouponPreviewResponse;
+import com.footverse.order.dto.OrderDetailResponse;
+import com.footverse.order.dto.OrderItemResponse;
+import com.footverse.order.dto.OrderSummaryResponse;
 import com.footverse.order.entity.Coupon;
 import com.footverse.order.entity.DiscountType;
+import com.footverse.order.entity.Order;
+import com.footverse.order.entity.OrderItem;
+import com.footverse.order.entity.OrderStatus;
+import com.footverse.order.entity.PaymentMethod;
+import com.footverse.order.entity.PaymentStatus;
 import com.footverse.order.mapper.CouponMapper;
 import com.footverse.order.mapper.OrderMapper;
 import com.footverse.order.repository.CouponRepository;
@@ -35,6 +51,7 @@ import com.footverse.order.repository.OrderItemRepository;
 import com.footverse.order.repository.OrderRepository;
 import com.footverse.product.dto.ProductVariantPurchaseSnapshot;
 import com.footverse.product.service.ProductVariantService;
+import com.footverse.user.entity.User;
 
 /**
  * Unit tests for the {@link OrderServiceImpl} checkout preview ({@code previewCoupon}): the
@@ -95,7 +112,7 @@ class OrderServiceImplTest {
         when(cartService.resolvePreviewItems(List.of(CART_ITEM_ID)))
                 .thenReturn(List.of(new CheckoutCartLine(CART_ITEM_ID, VARIANT_ID, quantity)));
         when(productVariantService.getPurchaseSnapshot(VARIANT_ID)).thenReturn(
-                new ProductVariantPurchaseSnapshot(VARIANT_ID, 100L, "Air Force 1", "img.png", "42",
+                new ProductVariantPurchaseSnapshot(VARIANT_ID, 100L, "Air Force 1", "img.png", "Black", "42",
                         new BigDecimal(unitPrice), 50, true));
     }
 
@@ -371,5 +388,183 @@ class OrderServiceImplTest {
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasFieldOrPropertyWithValue("errorCode", "CART_ITEM_NOT_FOUND");
         assertNoMutation();
+    }
+
+    // ----- Customer order queries (getMyOrders / getMyOrder) -----
+
+    private static final Long USER_ID = 1L;
+
+    private User caller() {
+        User user = new User();
+        user.setId(USER_ID);
+        return user;
+    }
+
+    private Order order(Long id) {
+        Order order = new Order();
+        order.setId(id);
+        order.setOrderCode("FV-ORDER-" + id);
+        order.setStatus(OrderStatus.PENDING);
+        order.setPaymentMethod(PaymentMethod.COD);
+        order.setPaymentStatus(PaymentStatus.UNPAID);
+        order.setTotal(new BigDecimal("30200.00"));
+        return order;
+    }
+
+    private OrderItem orderLine(Order order, int quantity) {
+        OrderItem item = new OrderItem();
+        item.setOrder(order);
+        item.setQuantity(quantity);
+        return item;
+    }
+
+    private OrderSummaryResponse summary(int itemCount) {
+        return new OrderSummaryResponse(5L, "FV-ORDER-5", OrderStatus.PENDING, PaymentStatus.UNPAID,
+                new BigDecimal("30200.00"), itemCount, LocalDateTime.now());
+    }
+
+    /**
+     * The order history is caller-scoped: the list is read for the authenticated user's id resolved
+     * through {@link CurrentUserProvider}, never a client-supplied id.
+     */
+    @Test
+    void getMyOrdersReadsOnlyTheCallersOrders() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        Order order = order(5L);
+        when(orderRepository.findByUserId(eq(USER_ID), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(order)));
+        when(orderItemRepository.findByOrderIdIn(List.of(5L)))
+                .thenReturn(List.of(orderLine(order, 2), orderLine(order, 3)));
+        when(orderMapper.toSummaryResponse(eq(order), anyInt())).thenReturn(summary(5));
+
+        PageResponse<OrderSummaryResponse> page = service.getMyOrders(PageRequest.of(0, 20));
+
+        assertThat(page.content()).hasSize(1);
+        verify(orderRepository).findByUserId(eq(USER_ID), any(Pageable.class));
+    }
+
+    /**
+     * {@code itemCount} is the sum of the order-item quantities (Σ quantity), computed by the service
+     * from a single batch read — not a stored column.
+     */
+    @Test
+    void getMyOrdersComputesItemCountAsSumOfQuantities() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        Order order = order(5L);
+        when(orderRepository.findByUserId(eq(USER_ID), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(order)));
+        when(orderItemRepository.findByOrderIdIn(List.of(5L)))
+                .thenReturn(List.of(orderLine(order, 2), orderLine(order, 3)));
+        when(orderMapper.toSummaryResponse(eq(order), anyInt())).thenReturn(summary(5));
+
+        service.getMyOrders(PageRequest.of(0, 20));
+
+        ArgumentCaptor<Integer> itemCount = ArgumentCaptor.forClass(Integer.class);
+        verify(orderMapper).toSummaryResponse(eq(order), itemCount.capture());
+        assertThat(itemCount.getValue()).isEqualTo(5);
+    }
+
+    /**
+     * The list is always ordered {@code createdAt} descending: the service preserves the client's
+     * page and size but overrides any client-supplied sort (assumption 3).
+     */
+    @Test
+    void getMyOrdersForcesCreatedAtDescendingSort() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        when(orderRepository.findByUserId(eq(USER_ID), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service.getMyOrders(PageRequest.of(2, 15, Sort.by(Sort.Direction.ASC, "total")));
+
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        verify(orderRepository).findByUserId(eq(USER_ID), pageable.capture());
+        Pageable used = pageable.getValue();
+        assertThat(used.getPageNumber()).isEqualTo(2);
+        assertThat(used.getPageSize()).isEqualTo(15);
+        Sort.Order createdAt = used.getSort().getOrderFor("createdAt");
+        assertThat(createdAt).isNotNull();
+        assertThat(createdAt.getDirection()).isEqualTo(Sort.Direction.DESC);
+        assertThat(used.getSort().getOrderFor("total")).isNull();
+    }
+
+    /**
+     * With no orders on the page, the service skips the item-count batch query entirely.
+     */
+    @Test
+    void getMyOrdersWithNoOrdersSkipsItemCountQuery() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        when(orderRepository.findByUserId(eq(USER_ID), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        PageResponse<OrderSummaryResponse> page = service.getMyOrders(PageRequest.of(0, 20));
+
+        assertThat(page.content()).isEmpty();
+        verify(orderItemRepository, never()).findByOrderIdIn(any());
+    }
+
+    /**
+     * The detail is assembled entirely from the persisted order and its item snapshots (including the
+     * post-migration {@code color}); the service reads the caller-scoped order and maps its lines.
+     */
+    @Test
+    void getMyOrderReturnsDetailAssembledFromSnapshots() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        Order order = order(9L);
+        OrderItem line = orderLine(order, 2);
+        when(orderRepository.findByIdAndUserId(9L, USER_ID)).thenReturn(Optional.of(order));
+        when(orderItemRepository.findByOrderId(9L)).thenReturn(List.of(line));
+        OrderItemResponse itemResponse = new OrderItemResponse(1L, 7L, "Air Force 1", "img.png", "Black",
+                "42", new BigDecimal("100.00"), 2, new BigDecimal("200.00"));
+        when(orderMapper.toResponse(line)).thenReturn(itemResponse);
+        OrderDetailResponse detail = new OrderDetailResponse(9L, "FV-ORDER-9", OrderStatus.PENDING,
+                PaymentMethod.COD, PaymentStatus.UNPAID, new BigDecimal("200.00"), BigDecimal.ZERO,
+                new BigDecimal("30000.00"), new BigDecimal("30200.00"), null, "Jane", "0900000000", "HCM",
+                "D1", "W1", "1 Street", null, List.of(itemResponse), LocalDateTime.now(), null, null);
+        when(orderMapper.toDetailResponse(order, List.of(itemResponse))).thenReturn(detail);
+
+        OrderDetailResponse result = service.getMyOrder(9L);
+
+        assertThat(result).isSameAs(detail);
+        assertThat(result.items()).singleElement()
+                .satisfies(item -> assertThat(item.color()).isEqualTo("Black"));
+        verify(orderMapper).toResponse(line);
+    }
+
+    /**
+     * An order that exists but belongs to another user is the ownership {@code 403 ORDER_FORBIDDEN} —
+     * never hidden behind a {@code 404} (address / cart precedent).
+     */
+    @Test
+    void getMyOrderOfAnotherUserIsForbidden() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        when(orderRepository.findByIdAndUserId(9L, USER_ID)).thenReturn(Optional.empty());
+        when(orderRepository.existsById(9L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.getMyOrder(9L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "ORDER_FORBIDDEN")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.FORBIDDEN);
+    }
+
+    /**
+     * An order that does not exist at all is the {@code 404 ORDER_NOT_FOUND}.
+     */
+    @Test
+    void getMyOrderThatDoesNotExistIsNotFound() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        when(orderRepository.findByIdAndUserId(9L, USER_ID)).thenReturn(Optional.empty());
+        when(orderRepository.existsById(9L)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.getMyOrder(9L))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "ORDER_NOT_FOUND")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.NOT_FOUND);
     }
 }

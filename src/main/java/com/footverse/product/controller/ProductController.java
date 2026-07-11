@@ -256,7 +256,7 @@ public class ProductController {
                     content = @Content(mediaType = "application/json",
                             schema = @Schema(implementation = ApiResponse.class))),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "PRODUCT_VARIANT_SIZE_DUPLICATED - the product already has this size; "
+                    description = "PRODUCT_VARIANT_DUPLICATED - the product already has this color and size; "
                             + "PRODUCT_VARIANT_SKU_DUPLICATED - the SKU already exists",
                     content = @Content(mediaType = "application/json",
                             schema = @Schema(implementation = ApiResponse.class)))
@@ -301,7 +301,7 @@ public class ProductController {
                     content = @Content(mediaType = "application/json",
                             schema = @Schema(implementation = ApiResponse.class))),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
-                    description = "PRODUCT_VARIANT_SIZE_DUPLICATED - the product already has this size; "
+                    description = "PRODUCT_VARIANT_DUPLICATED - the product already has this color and size; "
                             + "PRODUCT_VARIANT_SKU_DUPLICATED - the SKU already exists",
                     content = @Content(mediaType = "application/json",
                             schema = @Schema(implementation = ApiResponse.class)))

@@ -8,9 +8,13 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +34,7 @@ import com.footverse.order.dto.CouponResponse;
 import com.footverse.order.dto.CreateCouponRequest;
 import com.footverse.order.dto.OrderDetailResponse;
 import com.footverse.order.dto.OrderItemResponse;
+import com.footverse.order.dto.OrderSummaryResponse;
 import com.footverse.order.dto.PlaceOrderRequest;
 import com.footverse.order.dto.UpdateCouponRequest;
 import com.footverse.order.entity.Coupon;
@@ -81,6 +86,13 @@ public class OrderServiceImpl implements OrderService {
             "Order subtotal does not meet the coupon minimum";
     private static final String ORDER_CODE_GENERATION_FAILED_CODE = "ORDER_CODE_GENERATION_FAILED";
     private static final String ORDER_CODE_GENERATION_FAILED_MESSAGE = "Could not generate a unique order code";
+    private static final String ORDER_NOT_FOUND_CODE = "ORDER_NOT_FOUND";
+    private static final String ORDER_NOT_FOUND_MESSAGE = "Order not found";
+    private static final String ORDER_FORBIDDEN_CODE = "ORDER_FORBIDDEN";
+    private static final String ORDER_FORBIDDEN_MESSAGE = "You cannot access this order";
+
+    /** Field the order-history list is always sorted by, most-recent-first (assumption 3). */
+    private static final String ORDER_HISTORY_SORT_FIELD = "createdAt";
 
     /** Flat shipping fee applied to every order (business-rules → Order; sprint-4-plan assumption 5). */
     private static final BigDecimal SHIPPING_FEE = new BigDecimal("30000.00");
@@ -202,6 +214,76 @@ public class OrderServiceImpl implements OrderService {
         return orderMapper.toDetailResponse(order, itemResponses);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<OrderSummaryResponse> getMyOrders(Pageable pageable) {
+        Long userId = currentUserProvider.getCurrentUser().getId();
+        Page<Order> orders = orderRepository.findByUserId(userId, mostRecentFirst(pageable));
+        Map<Long, Integer> itemCounts = itemCountsByOrder(orders.getContent());
+        return PageResponse.from(orders.map(order ->
+                orderMapper.toSummaryResponse(order, itemCounts.getOrDefault(order.getId(), 0))));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public OrderDetailResponse getMyOrder(Long id) {
+        Long userId = currentUserProvider.getCurrentUser().getId();
+        Order order = orderRepository.findByIdAndUserId(id, userId)
+                .orElseThrow(() -> unresolvableOrder(id));
+        List<OrderItemResponse> items = orderItemRepository.findByOrderId(order.getId()).stream()
+                .map(orderMapper::toResponse)
+                .toList();
+        return orderMapper.toDetailResponse(order, items);
+    }
+
+    /**
+     * Rebuilds the given pageable with its page and size preserved but its sort forced to
+     * {@code createdAt} descending, so the order history is always most-recent-first regardless of
+     * any client-supplied sort (assumption 3, business-rules → Order).
+     *
+     * @param pageable the incoming pagination request
+     * @return a pagination request with the same page/size and a fixed {@code createdAt} desc sort
+     */
+    private Pageable mostRecentFirst(Pageable pageable) {
+        return PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(),
+                Sort.by(Sort.Direction.DESC, ORDER_HISTORY_SORT_FIELD));
+    }
+
+    /**
+     * Computes each order's {@code itemCount} (Σ order-item quantity) for a history page, reading the
+     * lines of every order on the page in one batch query and grouping in memory — never a stored
+     * column and never a per-order N+1 (the aggregate is the service's responsibility, not the
+     * mapper's).
+     *
+     * @param orders the orders on the current page
+     * @return a map from order id to the sum of its order-item quantities
+     */
+    private Map<Long, Integer> itemCountsByOrder(List<Order> orders) {
+        if (orders.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> orderIds = orders.stream().map(Order::getId).toList();
+        return orderItemRepository.findByOrderIdIn(orderIds).stream()
+                .collect(Collectors.groupingBy(item -> item.getOrder().getId(),
+                        Collectors.summingInt(OrderItem::getQuantity)));
+    }
+
+    /**
+     * Distinguishes the two reasons a caller-scoped order read can come back empty, mirroring the
+     * address / cart ownership precedent (security-spec §7): an order that exists but belongs to
+     * another user is a {@code 403}, an order that does not exist at all is a {@code 404}. Ownership
+     * is never hidden behind a {@code 404}.
+     *
+     * @param id the requested order id
+     * @return the exception to throw
+     */
+    private RuntimeException unresolvableOrder(Long id) {
+        if (orderRepository.existsById(id)) {
+            return new BusinessException(HttpStatus.FORBIDDEN, ORDER_FORBIDDEN_CODE, ORDER_FORBIDDEN_MESSAGE);
+        }
+        return new ResourceNotFoundException(ORDER_NOT_FOUND_CODE, ORDER_NOT_FOUND_MESSAGE);
+    }
+
     /**
      * Resolves each selected cart line to its variant purchase snapshot
      * ({@link ProductVariantService#getPurchaseSnapshot}), reading each snapshot once. The snapshot
@@ -295,9 +377,9 @@ public class OrderServiceImpl implements OrderService {
 
     /**
      * Builds one {@link OrderItem} per priced line, snapshotting the product name, primary image URL,
-     * size, and effective unit price from the variant purchase snapshot (database-spec §12) — never
-     * reading the catalog again — so later catalog edits cannot alter a placed order. Each line total
-     * is {@code unitPrice × quantity}.
+     * color, size, and effective unit price from the variant purchase snapshot (database-spec §12) —
+     * never reading the catalog again — so later catalog edits cannot alter a placed order. Each line
+     * total is {@code unitPrice × quantity}.
      *
      * @param order       the owning (persisted) order
      * @param pricedLines the priced selected lines
@@ -312,6 +394,7 @@ public class OrderServiceImpl implements OrderService {
             item.setProductVariantId(snapshot.productVariantId());
             item.setProductName(snapshot.productName());
             item.setProductImageUrl(snapshot.primaryImageUrl());
+            item.setColor(snapshot.color());
             item.setSize(snapshot.size());
             item.setUnitPrice(snapshot.unitPrice());
             item.setQuantity(priced.line().quantity());

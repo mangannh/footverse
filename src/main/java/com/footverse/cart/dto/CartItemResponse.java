@@ -12,6 +12,7 @@ import java.math.BigDecimal;
  * @param productId        the owning product id
  * @param productName      the owning product's name
  * @param productImageUrl  the owning product's primary image URL, or {@code null} when it has none
+ * @param color            the variant color
  * @param size             the variant size
  * @param unitPrice        the effective unit price, resolved by the product module
  * @param quantity         the quantity in the cart
@@ -24,6 +25,7 @@ public record CartItemResponse(
         Long productId,
         String productName,
         String productImageUrl,
+        String color,
         String size,
         BigDecimal unitPrice,
         int quantity,

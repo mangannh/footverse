@@ -256,14 +256,14 @@ class ProductControllerTest {
      */
     @Test
     void createVariantAsAdminReturns201() throws Exception {
-        ProductVariantResponse variant = new ProductVariantResponse(2L, "42", new BigDecimal("100.00"),
+        ProductVariantResponse variant = new ProductVariantResponse(2L, "Black", "42", new BigDecimal("100.00"),
                 5, ProductVariantStatus.ACTIVE, "SKU-42");
         when(productVariantService.createVariant(eq(1L), any())).thenReturn(variant);
 
         mockMvc.perform(post("/api/v1/products/1/variants")
                         .header(HttpHeaders.AUTHORIZATION, adminToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"size\":\"42\",\"stockQuantity\":5,\"sku\":\"SKU-42\",\"status\":\"ACTIVE\"}"))
+                        .content("{\"color\":\"Black\",\"size\":\"42\",\"stockQuantity\":5,\"sku\":\"SKU-42\",\"status\":\"ACTIVE\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.id").value(2))
                 .andExpect(jsonPath("$.data.sku").value("SKU-42"));
@@ -277,14 +277,14 @@ class ProductControllerTest {
      */
     @Test
     void updateVariantAsAdminReturns200() throws Exception {
-        ProductVariantResponse variant = new ProductVariantResponse(2L, "43", new BigDecimal("100.00"),
+        ProductVariantResponse variant = new ProductVariantResponse(2L, "Black", "43", new BigDecimal("100.00"),
                 9, ProductVariantStatus.ACTIVE, "SKU-43");
         when(productVariantService.updateVariant(eq(1L), eq(2L), any())).thenReturn(variant);
 
         mockMvc.perform(put("/api/v1/products/1/variants/2")
                         .header(HttpHeaders.AUTHORIZATION, adminToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"size\":\"43\",\"stockQuantity\":9,\"sku\":\"SKU-43\",\"status\":\"ACTIVE\"}"))
+                        .content("{\"color\":\"Black\",\"size\":\"43\",\"stockQuantity\":9,\"sku\":\"SKU-43\",\"status\":\"ACTIVE\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.size").value("43"));
     }

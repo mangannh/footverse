@@ -92,7 +92,7 @@ class CartServiceImplTest {
     }
 
     private ProductVariantPurchaseSnapshot snapshot(String unitPrice, int stock, boolean active) {
-        return new ProductVariantPurchaseSnapshot(VARIANT_ID, 100L, "Air Force 1", "primary.png", "42",
+        return new ProductVariantPurchaseSnapshot(VARIANT_ID, 100L, "Air Force 1", "primary.png", "Black", "42",
                 new BigDecimal(unitPrice), stock, active);
     }
 

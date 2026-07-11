@@ -27,8 +27,8 @@ import lombok.Setter;
  * {@link #productVariantId} as a plain {@code Long}, never as a JPA association — mirroring the
  * {@code CartItem} precedent — so the {@code order} module does not import the {@code product}
  * module's entities; the database still enforces referential integrity through the
- * {@code fk_order_item_product_variant} RESTRICT foreign key. The product name, image, size, and
- * unit price are snapshots frozen at checkout (database-spec §12).</p>
+ * {@code fk_order_item_product_variant} RESTRICT foreign key. The product name, image, color, size,
+ * and unit price are snapshots frozen at checkout (database-spec §12).</p>
  */
 @Getter
 @Setter
@@ -52,6 +52,9 @@ public class OrderItem extends BaseEntity {
 
     @Column(name = "product_image_url", length = 512)
     private String productImageUrl;
+
+    @Column(nullable = false, length = 50)
+    private String color;
 
     @Column(nullable = false, length = 20)
     private String size;

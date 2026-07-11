@@ -8,6 +8,7 @@ import com.footverse.order.dto.CouponPreviewResponse;
 import com.footverse.order.dto.CouponResponse;
 import com.footverse.order.dto.CreateCouponRequest;
 import com.footverse.order.dto.OrderDetailResponse;
+import com.footverse.order.dto.OrderSummaryResponse;
 import com.footverse.order.dto.PlaceOrderRequest;
 import com.footverse.order.dto.UpdateCouponRequest;
 
@@ -15,9 +16,9 @@ import com.footverse.order.dto.UpdateCouponRequest;
  * Single service of the {@code order} module. It owns all order-related logic, including the coupon
  * concern, which lives here rather than in a standalone service (architecture-spec §4, §13).
  *
- * <p>This sprint delivers the admin coupon CRUD, the read-only checkout preview, and the
- * transactional checkout; cancellation, order queries, and admin status updates are added by later
- * tasks.</p>
+ * <p>This sprint delivers the admin coupon CRUD, the read-only checkout preview, the transactional
+ * checkout, and the caller-scoped order queries; cancellation and admin status updates are added by
+ * later tasks.</p>
  */
 public interface OrderService {
 
@@ -99,4 +100,33 @@ public interface OrderService {
      *         ({@code PRODUCT_VARIANT_NOT_FOUND}), or coupon code ({@code COUPON_NOT_FOUND})
      */
     OrderDetailResponse placeOrder(PlaceOrderRequest request);
+
+    /**
+     * Returns a page of the current caller's orders for their order history, most-recent-first
+     * ({@code createdAt} descending, sprint-4-plan assumption 3 — the ordering is enforced by the
+     * service regardless of any client-supplied sort). The list is caller-scoped (security-spec §7):
+     * only the authenticated user's own orders are returned. Each {@link OrderSummaryResponse}
+     * carries {@code itemCount}, the sum of its order-item quantities, computed by the service (never
+     * read from a stored column).
+     *
+     * @param pageable the pagination request (its page and size are honoured; the sort is overridden
+     *                 with {@code createdAt} descending)
+     * @return the caller's page of order summaries, newest first
+     */
+    PageResponse<OrderSummaryResponse> getMyOrders(Pageable pageable);
+
+    /**
+     * Returns one of the caller's orders in full detail, ownership-checked (security-spec §7). The
+     * response is assembled entirely from the persisted order and order-item snapshots — product
+     * name, image, color, size, unit price, money, and shipping are read as stored at checkout and
+     * never recomputed from the current catalog (database-spec §12).
+     *
+     * @param id the order id
+     * @return the caller's order with its checkout snapshots
+     * @throws com.footverse.common.exception.BusinessException {@code 403 ORDER_FORBIDDEN} when the
+     *         order exists but belongs to another user
+     * @throws com.footverse.common.exception.ResourceNotFoundException {@code 404 ORDER_NOT_FOUND}
+     *         when no order has the given id
+     */
+    OrderDetailResponse getMyOrder(Long id);
 }

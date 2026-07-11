@@ -21,18 +21,21 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * A size-specific stock-keeping unit of a {@link Product}. Maps to the {@code product_variant}
- * table (database-spec §10.8); audit timestamps are inherited from {@link BaseEntity}.
+ * A color-and-size-specific stock-keeping unit of a {@link Product}. Maps to the
+ * {@code product_variant} table (database-spec §10.8); audit timestamps are inherited from
+ * {@link BaseEntity}.
  *
  * <p>Owns its product via a unidirectional lazy {@code @ManyToOne}. The {@code sku} is unique and
- * each {@code (product, size)} pair is unique. The effective selling price is
- * {@link #priceOverride} when set, otherwise the owning product's {@code basePrice}.</p>
+ * each {@code (product, color, size)} triple is unique — one product carries all of its colorways,
+ * so the same size may repeat across colors and the same color across sizes. The effective selling
+ * price is {@link #priceOverride} when set, otherwise the owning product's {@code basePrice}.</p>
  */
 @Getter
 @Setter
 @Entity
 @Table(name = "product_variant", uniqueConstraints = {
-        @UniqueConstraint(name = "uk_product_variant_product_id_size", columnNames = {"product_id", "size"})
+        @UniqueConstraint(name = "uk_product_variant_product_id_color_size",
+                columnNames = {"product_id", "color", "size"})
 })
 public class ProductVariant extends BaseEntity {
 
@@ -43,6 +46,9 @@ public class ProductVariant extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
+
+    @Column(nullable = false, length = 50)
+    private String color;
 
     @Column(nullable = false, length = 20)
     private String size;

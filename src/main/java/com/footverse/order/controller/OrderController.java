@@ -1,14 +1,20 @@
 package com.footverse.order.controller;
 
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.footverse.common.dto.ApiResponse;
+import com.footverse.common.dto.PageResponse;
 import com.footverse.order.dto.OrderDetailResponse;
+import com.footverse.order.dto.OrderSummaryResponse;
 import com.footverse.order.dto.PlaceOrderRequest;
 import com.footverse.order.service.OrderService;
 
@@ -22,19 +28,21 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * Order endpoints for the authenticated customer (dto-spec §20). This task delivers checkout
- * ({@code POST /orders}); the order queries, cancellation, and admin status update are added by
- * later tasks. The controller only maps HTTP to the {@link OrderService} and wraps results in the
- * response envelope — it holds no business logic, computes no money, and performs no ownership check.
- * Role authorization is enforced by the security filter chain (security-spec §6 — every order path
- * requires CUSTOMER) and ownership by the service (security-spec §7); no endpoint accepts a user id,
- * so the caller can only ever reach their own resources.
+ * ({@code POST /orders}) and the caller-scoped order queries ({@code GET /orders},
+ * {@code GET /orders/{id}}); cancellation and admin status update are added by later tasks. The
+ * controller only maps HTTP to the {@link OrderService} and wraps results in the response envelope —
+ * it holds no business logic, computes no money, and performs no ownership check. Role authorization
+ * is enforced by the security filter chain (security-spec §6 — every order path requires CUSTOMER)
+ * and ownership by the service (security-spec §7); no endpoint accepts a user id, so the caller can
+ * only ever reach their own resources.
  *
  * <p>The Swagger annotation {@code io.swagger.v3.oas.annotations.responses.ApiResponse} is written
  * fully qualified throughout, because its simple name collides with the project's response envelope
  * {@link ApiResponse} that every method returns. Error responses declare the envelope explicitly,
  * since the {@code GlobalExceptionHandler} returns it rather than the success payload
  * (error-spec §2). A {@code 403} has two distinct causes: the role denial {@code FORBIDDEN}, and the
- * ownership denials {@code CART_ITEM_FORBIDDEN} / {@code ADDRESS_FORBIDDEN} (error-spec §8.8/§8.9).</p>
+ * ownership denials {@code CART_ITEM_FORBIDDEN} / {@code ADDRESS_FORBIDDEN} (error-spec §8.8/§8.9),
+ * and on {@code GET /orders/{id}} the ownership denial {@code ORDER_FORBIDDEN} (error-spec §8.11).</p>
  */
 @RestController
 @RequestMapping("/api/v1/orders")
@@ -85,5 +93,68 @@ public class OrderController {
             @Valid @RequestBody PlaceOrderRequest request) {
         OrderDetailResponse response = orderService.placeOrder(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.created(response));
+    }
+
+    /**
+     * Lists the current customer's orders, paginated and most-recent-first. Customer only;
+     * caller-scoped — only the authenticated user's own orders are returned.
+     *
+     * @param pageable the pagination request (default page 0, size 20; sort is fixed to
+     *                 {@code createdAt} descending by the service)
+     * @return {@code 200 OK} with the caller's page of order summaries
+     */
+    @Operation(summary = "List the current customer's orders, most-recent-first")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "The caller's page of order summaries, ordered createdAt descending"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "UNAUTHORIZED - missing, invalid, or expired access token",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class))),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+                    description = "FORBIDDEN - the caller is not a CUSTOMER",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class)))
+    })
+    @SecurityRequirement(name = "bearerAuth")
+    @GetMapping
+    public ResponseEntity<ApiResponse<PageResponse<OrderSummaryResponse>>> getMyOrders(
+            @PageableDefault(size = 20) Pageable pageable) {
+        return ResponseEntity.ok(ApiResponse.ok(orderService.getMyOrders(pageable)));
+    }
+
+    /**
+     * Returns one of the current customer's orders in full detail with its checkout snapshots.
+     * Customer only; ownership-checked by the service.
+     *
+     * @param id the order id
+     * @return {@code 200 OK} with the caller's order detail
+     */
+    @Operation(summary = "Get one of the current customer's orders in full detail")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "The caller's order with its checkout snapshots"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                    description = "VALIDATION_ERROR - id is not a valid number",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class))),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "UNAUTHORIZED - missing, invalid, or expired access token",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class))),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+                    description = "FORBIDDEN - the caller is not a CUSTOMER; "
+                            + "ORDER_FORBIDDEN - the order belongs to another user",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class))),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "ORDER_NOT_FOUND - no order has this id",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class)))
+    })
+    @SecurityRequirement(name = "bearerAuth")
+    @GetMapping("/{id}")
+    public ResponseEntity<ApiResponse<OrderDetailResponse>> getMyOrder(@PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.ok(orderService.getMyOrder(id)));
     }
 }

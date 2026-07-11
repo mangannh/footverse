@@ -37,14 +37,15 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
     List<ProductVariant> findByProductIdIn(Collection<Long> productIds);
 
     /**
-     * Checks whether the product already has a variant of the given size ({@code (product, size)}
-     * uniqueness).
+     * Checks whether the product already has a variant of the given color and size
+     * ({@code (product, color, size)} uniqueness).
      *
      * @param productId the owning product id
+     * @param color     the color to check
      * @param size      the size to check
      * @return {@code true} if such a variant exists
      */
-    boolean existsByProductIdAndSize(Long productId, String size);
+    boolean existsByProductIdAndColorAndSize(Long productId, String color, String size);
 
     /**
      * Checks whether any variant already uses the given SKU (global {@code sku} uniqueness).

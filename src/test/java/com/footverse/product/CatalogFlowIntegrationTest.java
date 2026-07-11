@@ -95,7 +95,7 @@ class CatalogFlowIntegrationTest {
         mockMvc.perform(post("/api/v1/products/" + productId + "/variants")
                         .header(HttpHeaders.AUTHORIZATION, adminToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"size\":\"42\",\"stockQuantity\":5,\"sku\":\"FV-INT-42\",\"status\":\"ACTIVE\"}"))
+                        .content("{\"color\":\"Black\",\"size\":\"42\",\"stockQuantity\":5,\"sku\":\"FV-INT-42\",\"status\":\"ACTIVE\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.price").value(150.00));
 
@@ -160,7 +160,7 @@ class CatalogFlowIntegrationTest {
         mockMvc.perform(post("/api/v1/products/" + productId + "/variants")
                         .header(HttpHeaders.AUTHORIZATION, adminToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"size\":\"41\",\"stockQuantity\":3,\"sku\":\"SD-41\",\"status\":\"ACTIVE\"}"))
+                        .content("{\"color\":\"White\",\"size\":\"41\",\"stockQuantity\":3,\"sku\":\"SD-41\",\"status\":\"ACTIVE\"}"))
                 .andExpect(status().isCreated());
 
         // Visible before deletion.

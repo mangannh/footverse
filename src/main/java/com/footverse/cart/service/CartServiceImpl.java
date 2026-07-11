@@ -289,6 +289,7 @@ public class CartServiceImpl implements CartService {
                 snapshot.productId(),
                 snapshot.productName(),
                 snapshot.primaryImageUrl(),
+                snapshot.color(),
                 snapshot.size(),
                 snapshot.unitPrice(),
                 item.getQuantity(),

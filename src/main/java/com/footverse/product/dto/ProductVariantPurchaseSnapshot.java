@@ -16,6 +16,7 @@ import java.math.BigDecimal;
  * @param productId        the owning product id
  * @param productName      the owning product's name
  * @param primaryImageUrl  the owning product's primary image URL, or {@code null} when it has none
+ * @param color            the variant color
  * @param size             the variant size
  * @param unitPrice        the effective selling price: the variant's {@code priceOverride} when
  *                         set, otherwise the owning product's {@code basePrice}
@@ -27,6 +28,7 @@ public record ProductVariantPurchaseSnapshot(
         Long productId,
         String productName,
         String primaryImageUrl,
+        String color,
         String size,
         BigDecimal unitPrice,
         int stockQuantity,

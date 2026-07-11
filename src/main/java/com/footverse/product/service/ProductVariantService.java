@@ -50,7 +50,7 @@ public interface ProductVariantService {
 
     /**
      * Returns the purchase snapshot of a single variant: the owning product's id / name / primary
-     * image URL, the variant's size and stock, whether it is {@code ACTIVE}, and the already
+     * image URL, the variant's color, size and stock, whether it is {@code ACTIVE}, and the already
      * resolved effective unit price. Callers use the snapshot as-is and never recompute the price
      * (architecture-spec §7).
      *
@@ -63,7 +63,7 @@ public interface ProductVariantService {
 
     /**
      * Creates a variant for a product. The product must exist (and not be soft-deleted); the
-     * {@code (product, size)} pair and the {@code sku} must be unique.
+     * {@code (product, color, size)} triple and the {@code sku} must be unique.
      *
      * @param productId the owning product id
      * @param request   the validated create payload
@@ -73,7 +73,7 @@ public interface ProductVariantService {
 
     /**
      * Updates a variant of a product. The variant must belong to the product; a changed
-     * {@code size} or {@code sku} must remain unique.
+     * {@code (color, size)} pair or {@code sku} must remain unique.
      *
      * @param productId the owning product id
      * @param variantId the id of the variant to update

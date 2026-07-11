@@ -78,7 +78,7 @@ class CartControllerTest {
     }
 
     private CartResponse cartWithOneLine() {
-        CartItemResponse item = new CartItemResponse(10L, 7L, 100L, "Air Force 1", "primary.png", "42",
+        CartItemResponse item = new CartItemResponse(10L, 7L, 100L, "Air Force 1", "primary.png", "Black", "42",
                 new BigDecimal("111.00"), 3, new BigDecimal("333.00"), true);
         return new CartResponse(List.of(item), new BigDecimal("333.00"), 3);
     }

@@ -102,6 +102,7 @@ class ProductVariantServiceImplTest {
         ProductVariant variant = new ProductVariant();
         variant.setId(id);
         variant.setProduct(product);
+        variant.setColor("Black");
         variant.setSize(size);
         variant.setSku(sku);
         variant.setStockQuantity(stock);
@@ -120,7 +121,7 @@ class ProductVariantServiceImplTest {
         Product product = product(1L, "100.00");
         ProductVariant entity = variant(10L, product, "42", "SKU-42", 5,
                 new BigDecimal("111.00"), ProductVariantStatus.ACTIVE);
-        ProductVariantResponse mapped = new ProductVariantResponse(10L, "42", new BigDecimal("111.00"),
+        ProductVariantResponse mapped = new ProductVariantResponse(10L, "Black", "42", new BigDecimal("111.00"),
                 5, ProductVariantStatus.ACTIVE, "SKU-42");
         when(productVariantRepository.findByProductId(1L)).thenReturn(List.of(entity));
         when(productVariantMapper.toResponse(entity)).thenReturn(mapped);
@@ -234,6 +235,7 @@ class ProductVariantServiceImplTest {
         assertThat(snapshot.productId()).isEqualTo(1L);
         assertThat(snapshot.productName()).isEqualTo("Air Force 1");
         assertThat(snapshot.primaryImageUrl()).isEqualTo("primary.png");
+        assertThat(snapshot.color()).isEqualTo("Black");
         assertThat(snapshot.size()).isEqualTo("42");
         assertThat(snapshot.unitPrice()).isEqualByComparingTo("111.00");
         assertThat(snapshot.stockQuantity()).isEqualTo(7);
@@ -344,12 +346,12 @@ class ProductVariantServiceImplTest {
     @Test
     void createVariantPersistsAndReturnsResponse() {
         Product product = product(1L, "100.00");
-        CreateProductVariantRequest request = new CreateProductVariantRequest("42", 5, "SKU-42",
+        CreateProductVariantRequest request = new CreateProductVariantRequest("Black", "42", 5, "SKU-42",
                 new BigDecimal("120.00"), ProductVariantStatus.ACTIVE);
-        ProductVariantResponse mapped = new ProductVariantResponse(null, "42", new BigDecimal("120.00"),
+        ProductVariantResponse mapped = new ProductVariantResponse(null, "Black", "42", new BigDecimal("120.00"),
                 5, ProductVariantStatus.ACTIVE, "SKU-42");
         when(productRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(product));
-        when(productVariantRepository.existsByProductIdAndSize(1L, "42")).thenReturn(false);
+        when(productVariantRepository.existsByProductIdAndColorAndSize(1L, "Black", "42")).thenReturn(false);
         when(productVariantRepository.existsBySku("SKU-42")).thenReturn(false);
         when(productVariantRepository.save(any(ProductVariant.class))).thenAnswer(inv -> inv.getArgument(0));
         when(productVariantMapper.toResponse(any(ProductVariant.class))).thenReturn(mapped);
@@ -361,6 +363,7 @@ class ProductVariantServiceImplTest {
         verify(productVariantRepository).save(captor.capture());
         ProductVariant saved = captor.getValue();
         assertThat(saved.getProduct()).isSameAs(product);
+        assertThat(saved.getColor()).isEqualTo("Black");
         assertThat(saved.getSize()).isEqualTo("42");
         assertThat(saved.getStockQuantity()).isEqualTo(5);
         assertThat(saved.getSku()).isEqualTo("SKU-42");
@@ -374,7 +377,7 @@ class ProductVariantServiceImplTest {
     @Test
     void createVariantOnMissingProductThrowsNotFound() {
         when(productRepository.findByIdAndDeletedAtIsNull(9L)).thenReturn(Optional.empty());
-        CreateProductVariantRequest request = new CreateProductVariantRequest("42", 5, "SKU",
+        CreateProductVariantRequest request = new CreateProductVariantRequest("Black", "42", 5, "SKU",
                 null, ProductVariantStatus.ACTIVE);
 
         assertThatThrownBy(() -> service.createVariant(9L, request))
@@ -384,19 +387,20 @@ class ProductVariantServiceImplTest {
     }
 
     /**
-     * A duplicate {@code (product, size)} is an enveloped 409.
+     * A duplicate {@code (product, color, size)} is an enveloped 409: Black + 40 twice for the same
+     * product is rejected.
      */
     @Test
-    void createVariantWithDuplicateSizeThrowsConflict() {
+    void createVariantWithDuplicateColorAndSizeThrowsConflict() {
         Product product = product(1L, "100.00");
         when(productRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(product));
-        when(productVariantRepository.existsByProductIdAndSize(1L, "42")).thenReturn(true);
-        CreateProductVariantRequest request = new CreateProductVariantRequest("42", 5, "SKU",
+        when(productVariantRepository.existsByProductIdAndColorAndSize(1L, "Black", "42")).thenReturn(true);
+        CreateProductVariantRequest request = new CreateProductVariantRequest("Black", "42", 5, "SKU",
                 null, ProductVariantStatus.ACTIVE);
 
         assertThatThrownBy(() -> service.createVariant(1L, request))
                 .isInstanceOf(DuplicateResourceException.class)
-                .hasFieldOrPropertyWithValue("errorCode", "PRODUCT_VARIANT_SIZE_DUPLICATED")
+                .hasFieldOrPropertyWithValue("errorCode", "PRODUCT_VARIANT_DUPLICATED")
                 .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.CONFLICT);
         verify(productVariantRepository, never()).save(any());
     }
@@ -408,9 +412,9 @@ class ProductVariantServiceImplTest {
     void createVariantWithDuplicateSkuThrowsConflict() {
         Product product = product(1L, "100.00");
         when(productRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(product));
-        when(productVariantRepository.existsByProductIdAndSize(1L, "42")).thenReturn(false);
+        when(productVariantRepository.existsByProductIdAndColorAndSize(1L, "Black", "42")).thenReturn(false);
         when(productVariantRepository.existsBySku("DUP")).thenReturn(true);
-        CreateProductVariantRequest request = new CreateProductVariantRequest("42", 5, "DUP",
+        CreateProductVariantRequest request = new CreateProductVariantRequest("Black", "42", 5, "DUP",
                 null, ProductVariantStatus.ACTIVE);
 
         assertThatThrownBy(() -> service.createVariant(1L, request))
@@ -428,14 +432,14 @@ class ProductVariantServiceImplTest {
     void updateVariantAppliesChanges() {
         Product product = product(1L, "100.00");
         ProductVariant existing = variant(7L, product, "41", "OLD-SKU", 2, null, ProductVariantStatus.INACTIVE);
-        ProductVariantResponse mapped = new ProductVariantResponse(7L, "42", new BigDecimal("100.00"),
+        ProductVariantResponse mapped = new ProductVariantResponse(7L, "Black", "42", new BigDecimal("100.00"),
                 9, ProductVariantStatus.ACTIVE, "NEW-SKU");
         when(productVariantRepository.findById(7L)).thenReturn(Optional.of(existing));
-        when(productVariantRepository.existsByProductIdAndSize(1L, "42")).thenReturn(false);
+        when(productVariantRepository.existsByProductIdAndColorAndSize(1L, "Black", "42")).thenReturn(false);
         when(productVariantRepository.existsBySku("NEW-SKU")).thenReturn(false);
         when(productVariantRepository.save(any(ProductVariant.class))).thenAnswer(inv -> inv.getArgument(0));
         when(productVariantMapper.toResponse(existing)).thenReturn(mapped);
-        UpdateProductVariantRequest request = new UpdateProductVariantRequest("42", 9, "NEW-SKU",
+        UpdateProductVariantRequest request = new UpdateProductVariantRequest("Black", "42", 9, "NEW-SKU",
                 null, ProductVariantStatus.ACTIVE);
 
         ProductVariantResponse result = service.updateVariant(1L, 7L, request);
@@ -456,7 +460,7 @@ class ProductVariantServiceImplTest {
         Product other = product(2L, "100.00");
         ProductVariant existing = variant(7L, other, "41", "SKU", 2, null, ProductVariantStatus.ACTIVE);
         when(productVariantRepository.findById(7L)).thenReturn(Optional.of(existing));
-        UpdateProductVariantRequest request = new UpdateProductVariantRequest("41", 2, "SKU",
+        UpdateProductVariantRequest request = new UpdateProductVariantRequest("Black", "41", 2, "SKU",
                 null, ProductVariantStatus.ACTIVE);
 
         assertThatThrownBy(() -> service.updateVariant(1L, 7L, request))
@@ -471,7 +475,7 @@ class ProductVariantServiceImplTest {
     @Test
     void updateMissingVariantThrowsNotFound() {
         when(productVariantRepository.findById(7L)).thenReturn(Optional.empty());
-        UpdateProductVariantRequest request = new UpdateProductVariantRequest("41", 2, "SKU",
+        UpdateProductVariantRequest request = new UpdateProductVariantRequest("Black", "41", 2, "SKU",
                 null, ProductVariantStatus.ACTIVE);
 
         assertThatThrownBy(() -> service.updateVariant(1L, 7L, request))
@@ -480,20 +484,21 @@ class ProductVariantServiceImplTest {
     }
 
     /**
-     * Changing size to one already used by the product is an enveloped 409.
+     * Changing the {@code (color, size)} pair to one already used by the product is an enveloped
+     * 409.
      */
     @Test
-    void updateVariantToDuplicateSizeThrowsConflict() {
+    void updateVariantToDuplicateColorAndSizeThrowsConflict() {
         Product product = product(1L, "100.00");
         ProductVariant existing = variant(7L, product, "41", "SKU", 2, null, ProductVariantStatus.ACTIVE);
         when(productVariantRepository.findById(7L)).thenReturn(Optional.of(existing));
-        when(productVariantRepository.existsByProductIdAndSize(1L, "42")).thenReturn(true);
-        UpdateProductVariantRequest request = new UpdateProductVariantRequest("42", 2, "SKU",
+        when(productVariantRepository.existsByProductIdAndColorAndSize(1L, "Black", "42")).thenReturn(true);
+        UpdateProductVariantRequest request = new UpdateProductVariantRequest("Black", "42", 2, "SKU",
                 null, ProductVariantStatus.ACTIVE);
 
         assertThatThrownBy(() -> service.updateVariant(1L, 7L, request))
                 .isInstanceOf(DuplicateResourceException.class)
-                .hasFieldOrPropertyWithValue("errorCode", "PRODUCT_VARIANT_SIZE_DUPLICATED");
+                .hasFieldOrPropertyWithValue("errorCode", "PRODUCT_VARIANT_DUPLICATED");
         verify(productVariantRepository, never()).save(any());
     }
 
@@ -508,7 +513,7 @@ class ProductVariantServiceImplTest {
         ProductVariant target = variant(7L, product, "41", "SKU-B", 2, null, ProductVariantStatus.ACTIVE);
         when(productVariantRepository.findById(7L)).thenReturn(Optional.of(target));
         when(productVariantRepository.existsBySku(sibling.getSku())).thenReturn(true);
-        UpdateProductVariantRequest request = new UpdateProductVariantRequest("41", 2, sibling.getSku(),
+        UpdateProductVariantRequest request = new UpdateProductVariantRequest("Black", "41", 2, sibling.getSku(),
                 null, ProductVariantStatus.ACTIVE);
 
         assertThatThrownBy(() -> service.updateVariant(1L, 7L, request))
@@ -520,23 +525,67 @@ class ProductVariantServiceImplTest {
     }
 
     /**
-     * Keeping the same size and SKU skips the uniqueness checks entirely.
+     * Keeping the same color, size, and SKU skips the uniqueness checks entirely.
      */
     @Test
-    void updateVariantKeepingSameSizeAndSkuSkipsUniquenessChecks() {
+    void updateVariantKeepingSameColorSizeAndSkuSkipsUniquenessChecks() {
         Product product = product(1L, "100.00");
         ProductVariant existing = variant(7L, product, "41", "SKU", 2, null, ProductVariantStatus.ACTIVE);
         when(productVariantRepository.findById(7L)).thenReturn(Optional.of(existing));
         when(productVariantRepository.save(any(ProductVariant.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(productVariantMapper.toResponse(existing)).thenReturn(new ProductVariantResponse(7L, "41",
+        when(productVariantMapper.toResponse(existing)).thenReturn(new ProductVariantResponse(7L, "Black", "41",
                 new BigDecimal("100.00"), 8, ProductVariantStatus.ACTIVE, "SKU"));
-        UpdateProductVariantRequest request = new UpdateProductVariantRequest("41", 8, "SKU",
+        UpdateProductVariantRequest request = new UpdateProductVariantRequest("Black", "41", 8, "SKU",
                 null, ProductVariantStatus.ACTIVE);
 
         service.updateVariant(1L, 7L, request);
 
-        verify(productVariantRepository, never()).existsByProductIdAndSize(anyLong(), anyString());
+        verify(productVariantRepository, never()).existsByProductIdAndColorAndSize(anyLong(), anyString(), anyString());
         verify(productVariantRepository, never()).existsBySku(anyString());
+    }
+
+    /**
+     * The same product may carry the same size in two different colors - Black + 40 and White + 40
+     * are two distinct, valid variants (the uniqueness triple is {@code (product, color, size)}).
+     */
+    @Test
+    void createVariantWithSameSizeDifferentColorIsAllowed() {
+        Product product = product(1L, "100.00");
+        CreateProductVariantRequest request = new CreateProductVariantRequest("White", "40", 5, "SKU-W-40",
+                null, ProductVariantStatus.ACTIVE);
+        when(productRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(product));
+        when(productVariantRepository.existsByProductIdAndColorAndSize(1L, "White", "40")).thenReturn(false);
+        when(productVariantRepository.existsBySku("SKU-W-40")).thenReturn(false);
+        when(productVariantRepository.save(any(ProductVariant.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(productVariantMapper.toResponse(any(ProductVariant.class))).thenReturn(
+                new ProductVariantResponse(null, "White", "40", new BigDecimal("100.00"),
+                        5, ProductVariantStatus.ACTIVE, "SKU-W-40"));
+
+        service.createVariant(1L, request);
+
+        ArgumentCaptor<ProductVariant> captor = ArgumentCaptor.forClass(ProductVariant.class);
+        verify(productVariantRepository).save(captor.capture());
+        assertThat(captor.getValue().getColor()).isEqualTo("White");
+        assertThat(captor.getValue().getSize()).isEqualTo("40");
+    }
+
+    /**
+     * Changing only the color still runs the {@code (product, color, size)} uniqueness check: moving
+     * a Black + 41 variant to White + 41 conflicts when White + 41 already exists.
+     */
+    @Test
+    void updateVariantChangingOnlyColorRunsUniquenessCheck() {
+        Product product = product(1L, "100.00");
+        ProductVariant existing = variant(7L, product, "41", "SKU", 2, null, ProductVariantStatus.ACTIVE);
+        when(productVariantRepository.findById(7L)).thenReturn(Optional.of(existing));
+        when(productVariantRepository.existsByProductIdAndColorAndSize(1L, "White", "41")).thenReturn(true);
+        UpdateProductVariantRequest request = new UpdateProductVariantRequest("White", "41", 2, "SKU",
+                null, ProductVariantStatus.ACTIVE);
+
+        assertThatThrownBy(() -> service.updateVariant(1L, 7L, request))
+                .isInstanceOf(DuplicateResourceException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "PRODUCT_VARIANT_DUPLICATED");
+        verify(productVariantRepository, never()).save(any());
     }
 
     // ----- Bean Validation guards (negative stock, required status, blanks) -----
@@ -546,7 +595,7 @@ class ProductVariantServiceImplTest {
      */
     @Test
     void negativeStockFailsBeanValidation() {
-        CreateProductVariantRequest request = new CreateProductVariantRequest("42", -1, "SKU",
+        CreateProductVariantRequest request = new CreateProductVariantRequest("Black", "42", -1, "SKU",
                 null, ProductVariantStatus.ACTIVE);
 
         Set<ConstraintViolation<CreateProductVariantRequest>> violations = validator.validate(request);
@@ -559,7 +608,7 @@ class ProductVariantServiceImplTest {
      */
     @Test
     void missingStockQuantityFailsBeanValidation() {
-        CreateProductVariantRequest request = new CreateProductVariantRequest("42", null, "SKU",
+        CreateProductVariantRequest request = new CreateProductVariantRequest("Black", "42", null, "SKU",
                 null, ProductVariantStatus.ACTIVE);
 
         Set<ConstraintViolation<CreateProductVariantRequest>> violations = validator.validate(request);
@@ -572,7 +621,7 @@ class ProductVariantServiceImplTest {
      */
     @Test
     void missingStatusFailsBeanValidation() {
-        CreateProductVariantRequest request = new CreateProductVariantRequest("42", 5, "SKU", null, null);
+        CreateProductVariantRequest request = new CreateProductVariantRequest("Black", "42", 5, "SKU", null, null);
 
         Set<ConstraintViolation<CreateProductVariantRequest>> violations = validator.validate(request);
 
@@ -584,7 +633,7 @@ class ProductVariantServiceImplTest {
      */
     @Test
     void blankSizeAndSkuFailBeanValidation() {
-        CreateProductVariantRequest request = new CreateProductVariantRequest(" ", 5, " ",
+        CreateProductVariantRequest request = new CreateProductVariantRequest("Black", " ", 5, " ",
                 null, ProductVariantStatus.ACTIVE);
 
         Set<ConstraintViolation<CreateProductVariantRequest>> violations = validator.validate(request);
@@ -594,11 +643,37 @@ class ProductVariantServiceImplTest {
     }
 
     /**
+     * A blank color is rejected (required).
+     */
+    @Test
+    void blankColorFailsBeanValidation() {
+        CreateProductVariantRequest request = new CreateProductVariantRequest(" ", "42", 5, "SKU",
+                null, ProductVariantStatus.ACTIVE);
+
+        Set<ConstraintViolation<CreateProductVariantRequest>> violations = validator.validate(request);
+
+        assertThat(violations).anyMatch(v -> v.getPropertyPath().toString().equals("color"));
+    }
+
+    /**
+     * A color longer than 50 characters is rejected ({@code @Size(max = 50)}).
+     */
+    @Test
+    void overLengthColorFailsBeanValidation() {
+        CreateProductVariantRequest request = new CreateProductVariantRequest("C".repeat(51), "42", 5, "SKU",
+                null, ProductVariantStatus.ACTIVE);
+
+        Set<ConstraintViolation<CreateProductVariantRequest>> violations = validator.validate(request);
+
+        assertThat(violations).anyMatch(v -> v.getPropertyPath().toString().equals("color"));
+    }
+
+    /**
      * A non-positive price override is rejected ({@code @Positive} disallows zero and negatives).
      */
     @Test
     void nonPositivePriceOverrideFailsBeanValidation() {
-        CreateProductVariantRequest request = new CreateProductVariantRequest("42", 5, "SKU",
+        CreateProductVariantRequest request = new CreateProductVariantRequest("Black", "42", 5, "SKU",
                 BigDecimal.ZERO, ProductVariantStatus.ACTIVE);
 
         Set<ConstraintViolation<CreateProductVariantRequest>> violations = validator.validate(request);

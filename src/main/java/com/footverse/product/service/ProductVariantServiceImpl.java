@@ -31,7 +31,7 @@ import lombok.RequiredArgsConstructor;
 /**
  * Default {@link ProductVariantService} implementation backed by the {@code product}-module
  * repositories and {@link ProductVariantMapper}. It owns the variant business rules —
- * {@code (product, size)} and {@code sku} uniqueness and the purchasability rule — and never
+ * {@code (product, color, size)} and {@code sku} uniqueness and the purchasability rule — and never
  * calls another feature's service, so the bean graph stays acyclic (architecture-spec §6/§7).
  * The effective price is resolved solely by the mapper and is never recomputed here.
  */
@@ -81,6 +81,7 @@ public class ProductVariantServiceImpl implements ProductVariantService {
                 product.getId(),
                 product.getName(),
                 primaryImageUrl(product.getId()),
+                variant.getColor(),
                 variant.getSize(),
                 productVariantMapper.effectivePrice(variant),
                 variant.getStockQuantity(),
@@ -92,15 +93,16 @@ public class ProductVariantServiceImpl implements ProductVariantService {
     public ProductVariantResponse createVariant(Long productId, CreateProductVariantRequest request) {
         Product product = productRepository.findByIdAndDeletedAtIsNull(productId)
                 .orElseThrow(() -> new ResourceNotFoundException("PRODUCT_NOT_FOUND", "Product not found"));
-        if (productVariantRepository.existsByProductIdAndSize(productId, request.size())) {
-            throw new DuplicateResourceException("PRODUCT_VARIANT_SIZE_DUPLICATED",
-                    "A variant with this size already exists for the product");
+        if (productVariantRepository.existsByProductIdAndColorAndSize(productId, request.color(), request.size())) {
+            throw new DuplicateResourceException("PRODUCT_VARIANT_DUPLICATED",
+                    "A variant with this color and size already exists for the product");
         }
         if (productVariantRepository.existsBySku(request.sku())) {
             throw new DuplicateResourceException("PRODUCT_VARIANT_SKU_DUPLICATED", "SKU already exists");
         }
         ProductVariant variant = new ProductVariant();
         variant.setProduct(product);
+        variant.setColor(request.color());
         variant.setSize(request.size());
         variant.setStockQuantity(request.stockQuantity());
         variant.setSku(request.sku());
@@ -117,15 +119,19 @@ public class ProductVariantServiceImpl implements ProductVariantService {
                 .filter(existing -> existing.getProduct().getId().equals(productId))
                 .orElseThrow(() -> new ResourceNotFoundException("PRODUCT_VARIANT_NOT_FOUND",
                         "Product variant not found"));
-        if (!variant.getSize().equals(request.size())
-                && productVariantRepository.existsByProductIdAndSize(productId, request.size())) {
-            throw new DuplicateResourceException("PRODUCT_VARIANT_SIZE_DUPLICATED",
-                    "A variant with this size already exists for the product");
+        boolean colorSizeChanged = !variant.getColor().equals(request.color())
+                || !variant.getSize().equals(request.size());
+        if (colorSizeChanged
+                && productVariantRepository.existsByProductIdAndColorAndSize(productId, request.color(),
+                        request.size())) {
+            throw new DuplicateResourceException("PRODUCT_VARIANT_DUPLICATED",
+                    "A variant with this color and size already exists for the product");
         }
         if (!variant.getSku().equals(request.sku())
                 && productVariantRepository.existsBySku(request.sku())) {
             throw new DuplicateResourceException("PRODUCT_VARIANT_SKU_DUPLICATED", "SKU already exists");
         }
+        variant.setColor(request.color());
         variant.setSize(request.size());
         variant.setStockQuantity(request.stockQuantity());
         variant.setSku(request.sku());

@@ -321,7 +321,7 @@ class ProductServiceImplTest {
         ProductImage second = image(12L, "b.png", 1, false);
         ProductImageResponse firstResp = new ProductImageResponse(11L, "a.png", 0, true);
         ProductImageResponse secondResp = new ProductImageResponse(12L, "b.png", 1, false);
-        ProductVariantResponse variant = new ProductVariantResponse(21L, "42", new BigDecimal("100.00"),
+        ProductVariantResponse variant = new ProductVariantResponse(21L, "Black", "42", new BigDecimal("100.00"),
                 5, ProductVariantStatus.ACTIVE, "SKU-42");
         when(productRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(product));
         when(productImageRepository.findByProductIdOrderByDisplayOrderAsc(1L))
