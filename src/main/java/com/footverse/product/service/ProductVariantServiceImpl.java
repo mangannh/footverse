@@ -4,10 +4,13 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeSet;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.footverse.common.exception.BusinessException;
 import com.footverse.common.exception.DuplicateResourceException;
 import com.footverse.common.exception.ResourceNotFoundException;
 import com.footverse.product.dto.CreateProductVariantRequest;
@@ -129,6 +132,50 @@ public class ProductVariantServiceImpl implements ProductVariantService {
         variant.setPriceOverride(request.priceOverride());
         variant.setStatus(request.status());
         return productVariantMapper.toResponse(productVariantRepository.save(variant));
+    }
+
+    @Override
+    @Transactional
+    public void decrementStock(Map<Long, Integer> quantitiesByVariantId) {
+        for (Long variantId : new TreeSet<>(quantitiesByVariantId.keySet())) {
+            int quantity = quantitiesByVariantId.get(variantId);
+            ProductVariant variant = lockVariant(variantId);
+            if (variant.getStatus() != ProductVariantStatus.ACTIVE) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "PRODUCT_VARIANT_INACTIVE",
+                        "Product variant is not available for purchase");
+            }
+            if (variant.getStockQuantity() < quantity) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "PRODUCT_VARIANT_INSUFFICIENT_STOCK",
+                        "Requested quantity exceeds available stock");
+            }
+            variant.setStockQuantity(variant.getStockQuantity() - quantity);
+        }
+    }
+
+    @Override
+    @Transactional
+    public void restoreStock(Map<Long, Integer> quantitiesByVariantId) {
+        for (Long variantId : new TreeSet<>(quantitiesByVariantId.keySet())) {
+            ProductVariant variant = lockVariant(variantId);
+            variant.setStockQuantity(variant.getStockQuantity() + quantitiesByVariantId.get(variantId));
+        }
+    }
+
+    /**
+     * Reads a variant under a {@code PESSIMISTIC_WRITE} row lock, mirroring the Sprint 2
+     * primary-image locking precedent ({@code ProductServiceImpl#lockProduct}). The returned variant
+     * is managed, so a stock change on it is flushed with the caller's transaction — no explicit
+     * {@code save} is needed.
+     *
+     * @param variantId the variant id to lock
+     * @return the locked variant
+     * @throws ResourceNotFoundException {@code 404} {@code PRODUCT_VARIANT_NOT_FOUND} when no variant
+     *         has the id
+     */
+    private ProductVariant lockVariant(Long variantId) {
+        return productVariantRepository.findByIdForUpdate(variantId)
+                .orElseThrow(() -> new ResourceNotFoundException("PRODUCT_VARIANT_NOT_FOUND",
+                        "Product variant not found"));
     }
 
     /**

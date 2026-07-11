@@ -2,10 +2,16 @@ package com.footverse.product.repository;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import com.footverse.product.entity.ProductVariant;
+
+import jakarta.persistence.LockModeType;
 
 /**
  * Data access for {@link ProductVariant}. Standard CRUD is inherited from {@link JpaRepository};
@@ -47,4 +53,19 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
      * @return {@code true} if a variant with the SKU exists
      */
     boolean existsBySku(String sku);
+
+    /**
+     * Finds a variant by id acquiring a {@code PESSIMISTIC_WRITE} row lock, mirroring the Sprint 2
+     * locking precedent {@code findByIdAndDeletedAtIsNullForUpdate}. The variant row is the
+     * serialization point for stock writes: a concurrent checkout or cancellation touching the same
+     * variant blocks here until the holder commits, so the counter is mutated by one transaction at
+     * a time (architecture-spec §19). The variant carries no soft-delete state (it has no
+     * {@code deleted_at}; database-spec §10.8), so no such filter applies.
+     *
+     * @param id the variant id
+     * @return the variant if it exists, otherwise empty
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT v FROM ProductVariant v WHERE v.id = :id")
+    Optional<ProductVariant> findByIdForUpdate(@Param("id") Long id);
 }

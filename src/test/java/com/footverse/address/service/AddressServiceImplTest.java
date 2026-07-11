@@ -113,6 +113,55 @@ class AddressServiceImplTest {
     }
 
     /**
+     * Reading one of the caller's own addresses resolves it through the user-scoped query and returns
+     * the mapped response.
+     */
+    @Test
+    void getMyAddressReturnsTheCallersOwnAddress() {
+        init();
+        withCaller();
+        Address entity = address(ADDRESS_ID, true);
+        AddressResponse mapped = response();
+        when(addressRepository.findByIdAndUserId(ADDRESS_ID, CALLER_ID)).thenReturn(Optional.of(entity));
+        when(addressMapper.toResponse(entity)).thenReturn(mapped);
+
+        assertThat(service.getMyAddress(ADDRESS_ID)).isEqualTo(mapped);
+        verify(addressRepository).findByIdAndUserId(ADDRESS_ID, CALLER_ID);
+    }
+
+    /**
+     * Reading an address that does not exist at all is a {@code 404 ADDRESS_NOT_FOUND}.
+     */
+    @Test
+    void getMyAddressForMissingAddressIsNotFound() {
+        init();
+        withCaller();
+        when(addressRepository.findByIdAndUserId(ADDRESS_ID, CALLER_ID)).thenReturn(Optional.empty());
+        when(addressRepository.existsById(ADDRESS_ID)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.getMyAddress(ADDRESS_ID))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "ADDRESS_NOT_FOUND")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.NOT_FOUND);
+    }
+
+    /**
+     * Reading another user's address is an enveloped {@code 403 ADDRESS_FORBIDDEN}.
+     */
+    @Test
+    void getMyAddressForAnotherUsersAddressIsForbidden() {
+        init();
+        withCaller();
+        when(addressRepository.findByIdAndUserId(ADDRESS_ID, CALLER_ID)).thenReturn(Optional.empty());
+        when(addressRepository.existsById(ADDRESS_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.getMyAddress(ADDRESS_ID))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "ADDRESS_FORBIDDEN")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.FORBIDDEN);
+    }
+
+    /**
      * The caller's first address becomes the default even when the request does not ask for it.
      */
     @Test

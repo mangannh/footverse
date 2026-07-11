@@ -24,10 +24,11 @@ import lombok.RequiredArgsConstructor;
  * (security-spec §6), the BCrypt password encoder, and the enveloped 401/403 handlers.
  *
  * <p>The {@link JwtFilter} authenticates Bearer access tokens and populates the caller's role
- * authority. Public catalog reads stay open; the admin catalog writes require {@code ROLE_ADMIN};
- * the customer-owned shopping resources (address, cart, wishlist) require {@code ROLE_CUSTOMER};
- * every other endpoint requires authentication. A denied authorization is rendered as the
- * enveloped {@code 403} by the {@link RestAccessDeniedHandler}.</p>
+ * authority. Public catalog reads stay open; the admin catalog writes and admin coupon management
+ * (plus the admin order status transition) require {@code ROLE_ADMIN}; the customer-owned shopping
+ * resources (address, cart, wishlist), the checkout preview, and the order endpoints require
+ * {@code ROLE_CUSTOMER}; every other endpoint requires authentication. A denied authorization is
+ * rendered as the enveloped {@code 403} by the {@link RestAccessDeniedHandler}.</p>
  */
 @Configuration
 @RequiredArgsConstructor
@@ -82,6 +83,19 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/addresses/**").hasRole("CUSTOMER")
                         .requestMatchers("/api/v1/cart/**").hasRole("CUSTOMER")
                         .requestMatchers("/api/v1/wishlist/**").hasRole("CUSTOMER")
+                        // Coupon and order authorization (security-spec §6). The two narrow rules
+                        // (the CUSTOMER checkout preview and the ADMIN order-status transition) must
+                        // precede their broader siblings so the specific method/path wins: without
+                        // them, POST /coupons/validate would match the ADMIN POST /coupons/** rule and
+                        // PATCH /orders/*/status would match the CUSTOMER /orders/** rule. Ownership on
+                        // the customer order paths is enforced per-service via CurrentUserProvider,
+                        // not here (security-spec §7).
+                        .requestMatchers(HttpMethod.POST, "/api/v1/coupons/validate").hasRole("CUSTOMER")
+                        .requestMatchers(HttpMethod.PATCH, "/api/v1/orders/*/status").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/api/v1/coupons/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/coupons/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/coupons/**").hasRole("ADMIN")
+                        .requestMatchers("/api/v1/orders/**").hasRole("CUSTOMER")
                         .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(exceptions -> exceptions

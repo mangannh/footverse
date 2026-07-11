@@ -55,6 +55,12 @@ public class AddressServiceImpl implements AddressService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public AddressResponse getMyAddress(Long id) {
+        return addressMapper.toResponse(requireOwnedAddress(id, currentUserId()));
+    }
+
+    @Override
     @Transactional
     public AddressResponse createAddress(CreateAddressRequest request) {
         User currentUser = currentUserProvider.getCurrentUser();

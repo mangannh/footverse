@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -21,10 +22,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 
+import com.footverse.common.exception.BusinessException;
 import com.footverse.common.exception.DuplicateResourceException;
 import com.footverse.common.exception.ResourceNotFoundException;
 import com.footverse.product.dto.CreateProductVariantRequest;
@@ -601,5 +604,142 @@ class ProductVariantServiceImplTest {
         Set<ConstraintViolation<CreateProductVariantRequest>> violations = validator.validate(request);
 
         assertThat(violations).anyMatch(v -> v.getPropertyPath().toString().equals("priceOverride"));
+    }
+
+    // ----- Locked stock operations (decrement / restore) -----
+
+    /**
+     * Decrement reduces each ACTIVE variant's stock by its demanded quantity, reading each under the
+     * for-update lock.
+     */
+    @Test
+    void decrementStockReducesEachVariantByItsQuantity() {
+        Product product = product(1L, "100.00");
+        ProductVariant v2 = variant(2L, product, "42", "S2", 10, null, ProductVariantStatus.ACTIVE);
+        ProductVariant v5 = variant(5L, product, "43", "S5", 4, null, ProductVariantStatus.ACTIVE);
+        when(productVariantRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(v2));
+        when(productVariantRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(v5));
+
+        service.decrementStock(Map.of(2L, 3, 5L, 4));
+
+        assertThat(v2.getStockQuantity()).isEqualTo(7);
+        assertThat(v5.getStockQuantity()).isZero();
+    }
+
+    /**
+     * Decrementing exactly the available stock leaves zero — stock never goes negative.
+     */
+    @Test
+    void decrementStockToExactStockLeavesZero() {
+        Product product = product(1L, "100.00");
+        ProductVariant variant = variant(1L, product, "42", "S1", 5, null, ProductVariantStatus.ACTIVE);
+        when(productVariantRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(variant));
+
+        service.decrementStock(Map.of(1L, 5));
+
+        assertThat(variant.getStockQuantity()).isZero();
+    }
+
+    /**
+     * An INACTIVE variant reuses the existing {@code 400 PRODUCT_VARIANT_INACTIVE} code and leaves
+     * its stock untouched.
+     */
+    @Test
+    void decrementStockOnInactiveVariantReusesInactiveCode() {
+        Product product = product(1L, "100.00");
+        ProductVariant variant = variant(1L, product, "42", "S1", 8, null, ProductVariantStatus.INACTIVE);
+        when(productVariantRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(variant));
+
+        assertThatThrownBy(() -> service.decrementStock(Map.of(1L, 1)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "PRODUCT_VARIANT_INACTIVE")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.BAD_REQUEST)
+                .hasMessage("Product variant is not available for purchase");
+        assertThat(variant.getStockQuantity()).isEqualTo(8);
+    }
+
+    /**
+     * An ACTIVE variant with too little stock reuses the existing
+     * {@code 400 PRODUCT_VARIANT_INSUFFICIENT_STOCK} code and leaves its stock untouched (the check
+     * runs before any mutation, so stock can never go negative).
+     */
+    @Test
+    void decrementStockWithInsufficientStockReusesInsufficientCode() {
+        Product product = product(1L, "100.00");
+        ProductVariant variant = variant(1L, product, "42", "S1", 3, null, ProductVariantStatus.ACTIVE);
+        when(productVariantRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(variant));
+
+        assertThatThrownBy(() -> service.decrementStock(Map.of(1L, 5)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "PRODUCT_VARIANT_INSUFFICIENT_STOCK")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.BAD_REQUEST)
+                .hasMessage("Requested quantity exceeds available stock");
+        assertThat(variant.getStockQuantity()).isEqualTo(3);
+    }
+
+    /**
+     * An unknown variant reuses the existing {@code 404 PRODUCT_VARIANT_NOT_FOUND}; no new code is
+     * minted.
+     */
+    @Test
+    void decrementStockOnUnknownVariantThrowsNotFound() {
+        when(productVariantRepository.findByIdForUpdate(9L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.decrementStock(Map.of(9L, 1)))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "PRODUCT_VARIANT_NOT_FOUND")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.NOT_FOUND);
+    }
+
+    /**
+     * Variants are locked in ascending id order and the operation fails fast: when the lower-id
+     * variant is invalid, the higher-id variant is never even locked, so no later variant is
+     * touched before the abort.
+     */
+    @Test
+    void decrementStockLocksInAscendingIdOrderAndFailsFast() {
+        Product product = product(1L, "100.00");
+        ProductVariant v2 = variant(2L, product, "42", "S2", 0, null, ProductVariantStatus.INACTIVE);
+        when(productVariantRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(v2));
+
+        assertThatThrownBy(() -> service.decrementStock(Map.of(5L, 1, 2L, 1)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "PRODUCT_VARIANT_INACTIVE");
+        verify(productVariantRepository).findByIdForUpdate(2L);
+        verify(productVariantRepository, never()).findByIdForUpdate(5L);
+    }
+
+    /**
+     * Restore adds the given quantity back for each variant, reading each under the for-update lock
+     * and in ascending id order — it applies no checkout rule, so even an INACTIVE variant is
+     * credited.
+     */
+    @Test
+    void restoreStockAddsQuantityForEachVariantIncludingInactive() {
+        Product product = product(1L, "100.00");
+        ProductVariant v2 = variant(2L, product, "42", "S2", 1, null, ProductVariantStatus.ACTIVE);
+        ProductVariant v5 = variant(5L, product, "43", "S5", 0, null, ProductVariantStatus.INACTIVE);
+        when(productVariantRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(v2));
+        when(productVariantRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(v5));
+
+        service.restoreStock(Map.of(2L, 3, 5L, 2));
+
+        assertThat(v2.getStockQuantity()).isEqualTo(4);
+        assertThat(v5.getStockQuantity()).isEqualTo(2);
+        InOrder inOrder = inOrder(productVariantRepository);
+        inOrder.verify(productVariantRepository).findByIdForUpdate(2L);
+        inOrder.verify(productVariantRepository).findByIdForUpdate(5L);
+    }
+
+    /**
+     * Restoring an unknown variant reuses the existing {@code 404 PRODUCT_VARIANT_NOT_FOUND}.
+     */
+    @Test
+    void restoreStockOnUnknownVariantThrowsNotFound() {
+        when(productVariantRepository.findByIdForUpdate(9L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.restoreStock(Map.of(9L, 1)))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "PRODUCT_VARIANT_NOT_FOUND");
     }
 }

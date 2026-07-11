@@ -20,6 +20,7 @@ import org.springframework.http.HttpStatus;
 
 import com.footverse.cart.dto.AddCartItemRequest;
 import com.footverse.cart.dto.CartResponse;
+import com.footverse.cart.dto.CheckoutCartLine;
 import com.footverse.cart.dto.UpdateCartItemRequest;
 import com.footverse.cart.entity.Cart;
 import com.footverse.cart.entity.CartItem;
@@ -467,5 +468,203 @@ class CartServiceImplTest {
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasFieldOrPropertyWithValue("errorCode", "CART_ITEM_NOT_FOUND");
         verify(cartItemRepository, never()).delete(any());
+    }
+
+    // ----- Checkout reads (locked resolve / remove) -----
+
+    private CartItem cartItemOf(Cart cart, Long id, Long variantId, int quantity) {
+        CartItem item = new CartItem();
+        item.setId(id);
+        item.setCart(cart);
+        item.setProductVariantId(variantId);
+        item.setQuantity(quantity);
+        return item;
+    }
+
+    /**
+     * Resolving a single selected line reads it through the {@code PESSIMISTIC_WRITE} locking query
+     * and returns the minimal internal projection carrying only id, variant and quantity.
+     */
+    @Test
+    void resolveCheckoutItemsLocksAndReturnsSingleLine() {
+        init();
+        withCaller();
+        Cart cart = cart();
+        when(cartRepository.findByUserId(CALLER_ID)).thenReturn(Optional.of(cart));
+        when(cartItemRepository.findByIdInAndCartIdForUpdate(List.of(10L), CART_ID))
+                .thenReturn(List.of(cartItemOf(cart, 10L, 7L, 3)));
+
+        List<CheckoutCartLine> lines = service.resolveCheckoutItems(List.of(10L));
+
+        assertThat(lines).containsExactly(new CheckoutCartLine(10L, 7L, 3));
+        verify(cartItemRepository).findByIdInAndCartIdForUpdate(List.of(10L), CART_ID);
+    }
+
+    /**
+     * Resolving several selected lines returns one projection per requested id, in the requested
+     * order, each carrying its own variant and quantity.
+     */
+    @Test
+    void resolveCheckoutItemsResolvesMultipleLines() {
+        init();
+        withCaller();
+        Cart cart = cart();
+        when(cartRepository.findByUserId(CALLER_ID)).thenReturn(Optional.of(cart));
+        when(cartItemRepository.findByIdInAndCartIdForUpdate(List.of(10L, 11L), CART_ID))
+                .thenReturn(List.of(cartItemOf(cart, 10L, 7L, 2), cartItemOf(cart, 11L, 8L, 5)));
+
+        List<CheckoutCartLine> lines = service.resolveCheckoutItems(List.of(10L, 11L));
+
+        assertThat(lines).containsExactly(
+                new CheckoutCartLine(10L, 7L, 2),
+                new CheckoutCartLine(11L, 8L, 5));
+    }
+
+    /**
+     * A selected id that belongs to another user's cart is an enveloped {@code 403
+     * CART_ITEM_FORBIDDEN}: the cart-scoped locking read does not return it, and it exists elsewhere.
+     */
+    @Test
+    void resolveCheckoutItemsForAnotherUsersLineIsForbidden() {
+        init();
+        withCaller();
+        Cart cart = cart();
+        when(cartRepository.findByUserId(CALLER_ID)).thenReturn(Optional.of(cart));
+        when(cartItemRepository.findByIdInAndCartIdForUpdate(List.of(99L), CART_ID)).thenReturn(List.of());
+        when(cartItemRepository.existsById(99L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.resolveCheckoutItems(List.of(99L)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "CART_ITEM_FORBIDDEN")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.FORBIDDEN);
+    }
+
+    /**
+     * A selected id that does not exist at all is an enveloped {@code 404 CART_ITEM_NOT_FOUND}.
+     */
+    @Test
+    void resolveCheckoutItemsForMissingLineIsNotFound() {
+        init();
+        withCaller();
+        Cart cart = cart();
+        when(cartRepository.findByUserId(CALLER_ID)).thenReturn(Optional.of(cart));
+        when(cartItemRepository.findByIdInAndCartIdForUpdate(List.of(99L), CART_ID)).thenReturn(List.of());
+        when(cartItemRepository.existsById(99L)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.resolveCheckoutItems(List.of(99L)))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "CART_ITEM_NOT_FOUND")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.NOT_FOUND);
+    }
+
+    // ----- Checkout preview reads (plain resolve) -----
+
+    /**
+     * The preview resolution reads the selected lines through the plain (non-locking) cart-scoped
+     * query — never the {@code PESSIMISTIC_WRITE} one — and returns the same minimal projection.
+     */
+    @Test
+    void resolvePreviewItemsReadsPlainAndReturnsLines() {
+        init();
+        withCaller();
+        Cart cart = cart();
+        when(cartRepository.findByUserId(CALLER_ID)).thenReturn(Optional.of(cart));
+        when(cartItemRepository.findByIdInAndCartId(List.of(10L, 11L), CART_ID))
+                .thenReturn(List.of(cartItemOf(cart, 10L, 7L, 2), cartItemOf(cart, 11L, 8L, 5)));
+
+        List<CheckoutCartLine> lines = service.resolvePreviewItems(List.of(10L, 11L));
+
+        assertThat(lines).containsExactly(
+                new CheckoutCartLine(10L, 7L, 2),
+                new CheckoutCartLine(11L, 8L, 5));
+        verify(cartItemRepository).findByIdInAndCartId(List.of(10L, 11L), CART_ID);
+        verify(cartItemRepository, never()).findByIdInAndCartIdForUpdate(any(), any());
+    }
+
+    /**
+     * A previewed id that belongs to another user's cart is an enveloped {@code 403
+     * CART_ITEM_FORBIDDEN}, exactly as the locked resolution — the two share the ownership logic.
+     */
+    @Test
+    void resolvePreviewItemsForAnotherUsersLineIsForbidden() {
+        init();
+        withCaller();
+        Cart cart = cart();
+        when(cartRepository.findByUserId(CALLER_ID)).thenReturn(Optional.of(cart));
+        when(cartItemRepository.findByIdInAndCartId(List.of(99L), CART_ID)).thenReturn(List.of());
+        when(cartItemRepository.existsById(99L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.resolvePreviewItems(List.of(99L)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "CART_ITEM_FORBIDDEN")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.FORBIDDEN);
+    }
+
+    /**
+     * A previewed id that does not exist at all is an enveloped {@code 404 CART_ITEM_NOT_FOUND}.
+     */
+    @Test
+    void resolvePreviewItemsForMissingLineIsNotFound() {
+        init();
+        withCaller();
+        Cart cart = cart();
+        when(cartRepository.findByUserId(CALLER_ID)).thenReturn(Optional.of(cart));
+        when(cartItemRepository.findByIdInAndCartId(List.of(99L), CART_ID)).thenReturn(List.of());
+        when(cartItemRepository.existsById(99L)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.resolvePreviewItems(List.of(99L)))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "CART_ITEM_NOT_FOUND")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.NOT_FOUND);
+    }
+
+    /**
+     * Removing the checked-out lines deletes exactly the selected ids scoped to the caller's cart —
+     * proving the operation goes through the caller-scoped delete rather than an unscoped one.
+     */
+    @Test
+    void removeCheckedOutItemsDeletesSelectedOwnerLines() {
+        init();
+        withCaller();
+        Cart cart = cart();
+        when(cartRepository.findByUserId(CALLER_ID)).thenReturn(Optional.of(cart));
+
+        service.removeCheckedOutItems(List.of(10L, 11L));
+
+        verify(cartItemRepository).deleteByIdInAndCartId(List.of(10L, 11L), CART_ID);
+    }
+
+    /**
+     * Removing the checked-out lines never deletes the cart row itself.
+     */
+    @Test
+    void removeCheckedOutItemsNeverDeletesTheCartRow() {
+        init();
+        withCaller();
+        Cart cart = cart();
+        when(cartRepository.findByUserId(CALLER_ID)).thenReturn(Optional.of(cart));
+
+        service.removeCheckedOutItems(List.of(10L));
+
+        verify(cartRepository, never()).delete(any());
+        verify(cartRepository, never()).deleteById(any());
+    }
+
+    /**
+     * The removal is scoped to exactly the supplied ids and the caller's cart: the delete is invoked
+     * with only the selected id set, and no unscoped bulk delete is ever used, so unselected lines
+     * are never touched.
+     */
+    @Test
+    void removeCheckedOutItemsDeletesOnlySelectedRows() {
+        init();
+        withCaller();
+        Cart cart = cart();
+        when(cartRepository.findByUserId(CALLER_ID)).thenReturn(Optional.of(cart));
+
+        service.removeCheckedOutItems(List.of(10L));
+
+        verify(cartItemRepository).deleteByIdInAndCartId(List.of(10L), CART_ID);
+        verify(cartItemRepository, never()).deleteAll();
     }
 }

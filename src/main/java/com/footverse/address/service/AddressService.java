@@ -22,6 +22,21 @@ public interface AddressService {
     List<AddressResponse> getMyAddresses();
 
     /**
+     * Returns one of the caller's addresses by id, ownership-checked. Exposed for checkout, which
+     * snapshots the caller's shipping address onto the order; it returns the same
+     * {@link AddressResponse} as the other reads, never the {@code Address} entity, so the entity
+     * never crosses a module boundary (architecture-spec §7).
+     *
+     * @param id the id of the address to return
+     * @return the caller's address
+     * @throws com.footverse.common.exception.BusinessException {@code 403 ADDRESS_FORBIDDEN} when the
+     *         address belongs to another user
+     * @throws com.footverse.common.exception.ResourceNotFoundException {@code 404 ADDRESS_NOT_FOUND}
+     *         when no such address exists
+     */
+    AddressResponse getMyAddress(Long id);
+
+    /**
      * Creates an address owned by the caller. It becomes the default when it is the caller's first
      * address, or when the request asks for it — in which case the previous default is cleared.
      *

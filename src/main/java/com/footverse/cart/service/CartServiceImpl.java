@@ -1,7 +1,12 @@
 package com.footverse.cart.service;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -10,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.footverse.cart.dto.AddCartItemRequest;
 import com.footverse.cart.dto.CartItemResponse;
 import com.footverse.cart.dto.CartResponse;
+import com.footverse.cart.dto.CheckoutCartLine;
 import com.footverse.cart.dto.UpdateCartItemRequest;
 import com.footverse.cart.entity.Cart;
 import com.footverse.cart.entity.CartItem;
@@ -102,6 +108,58 @@ public class CartServiceImpl implements CartService {
         cartItemRepository.delete(item);
         // The cart row deliberately survives its last item (business-rules → Shopping Cart).
         return assembleCart(cart);
+    }
+
+    @Override
+    @Transactional
+    public List<CheckoutCartLine> resolveCheckoutItems(Collection<Long> cartItemIds) {
+        Cart cart = cartRepository.findByUserId(currentUserId()).orElse(null);
+        List<CartItem> found = cart == null
+                ? List.of()
+                : cartItemRepository.findByIdInAndCartIdForUpdate(cartItemIds, cart.getId());
+        return toCheckoutLines(cartItemIds, found);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<CheckoutCartLine> resolvePreviewItems(Collection<Long> cartItemIds) {
+        Cart cart = cartRepository.findByUserId(currentUserId()).orElse(null);
+        List<CartItem> found = cart == null
+                ? List.of()
+                : cartItemRepository.findByIdInAndCartId(cartItemIds, cart.getId());
+        return toCheckoutLines(cartItemIds, found);
+    }
+
+    @Override
+    @Transactional
+    public void removeCheckedOutItems(Collection<Long> cartItemIds) {
+        cartRepository.findByUserId(currentUserId())
+                .ifPresent(cart -> cartItemRepository.deleteByIdInAndCartId(cartItemIds, cart.getId()));
+    }
+
+    /**
+     * Builds the caller's checkout-line projections from the cart lines a scoped read returned,
+     * preserving the requested id order. Shared by the locked ({@link #resolveCheckoutItems}) and
+     * plain ({@link #resolvePreviewItems}) resolutions — only the repository read differs. A
+     * requested id absent from the read is unresolvable: another user's line is a {@code 403}, an
+     * unknown line a {@code 404}.
+     *
+     * @param cartItemIds the requested cart item ids, in the order to return
+     * @param found       the caller-scoped cart lines the read resolved
+     * @return the checkout-line projections in the requested order
+     */
+    private List<CheckoutCartLine> toCheckoutLines(Collection<Long> cartItemIds, List<CartItem> found) {
+        Map<Long, CartItem> byId = found.stream()
+                .collect(Collectors.toMap(CartItem::getId, Function.identity()));
+        List<CheckoutCartLine> lines = new ArrayList<>();
+        for (Long cartItemId : cartItemIds) {
+            CartItem item = byId.get(cartItemId);
+            if (item == null) {
+                throw unresolvableCartItem(cartItemId);
+            }
+            lines.add(new CheckoutCartLine(item.getId(), item.getProductVariantId(), item.getQuantity()));
+        }
+        return lines;
     }
 
     /**

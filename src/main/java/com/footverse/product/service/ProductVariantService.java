@@ -81,4 +81,36 @@ public interface ProductVariantService {
      * @return the updated variant
      */
     ProductVariantResponse updateVariant(Long productId, Long variantId, UpdateProductVariantRequest request);
+
+    /**
+     * Decrements stock for the given variants, each read under a {@code PESSIMISTIC_WRITE} lock and
+     * re-validated (exists, {@code ACTIVE}, sufficient stock) before its counter is reduced
+     * (architecture-spec §19; business-rules → Inventory). The whole operation is all-or-nothing:
+     * the first variant that fails aborts it with an existing purchase-rule error and leaves no
+     * partial write, because the method runs inside the caller's transaction (checkout owns the
+     * {@code @Transactional} boundary, architecture-spec §13) and joins it via the default
+     * propagation — it never opens a boundary of its own around checkout. Variants are locked in
+     * ascending id order so concurrent stock writers cannot deadlock.
+     *
+     * @param quantitiesByVariantId the quantity to subtract per variant id (each quantity positive)
+     * @throws com.footverse.common.exception.BusinessException {@code 400}
+     *         {@code PRODUCT_VARIANT_INACTIVE} when a variant is not {@code ACTIVE}, or {@code 400}
+     *         {@code PRODUCT_VARIANT_INSUFFICIENT_STOCK} when a variant has too little stock
+     * @throws com.footverse.common.exception.ResourceNotFoundException {@code 404}
+     *         {@code PRODUCT_VARIANT_NOT_FOUND} when no variant has a given id
+     */
+    void decrementStock(Map<Long, Integer> quantitiesByVariantId);
+
+    /**
+     * Restores stock for the given variants, each read under a {@code PESSIMISTIC_WRITE} lock and
+     * credited back exactly the given quantity (business-rules → Inventory / Cancellation). No
+     * checkout rule applies — the status and stock level are not re-validated; the counter is only
+     * increased. Like {@link #decrementStock(Map)} it runs inside the caller's (cancellation)
+     * transaction and locks variants in ascending id order.
+     *
+     * @param quantitiesByVariantId the quantity to add back per variant id (each quantity positive)
+     * @throws com.footverse.common.exception.ResourceNotFoundException {@code 404}
+     *         {@code PRODUCT_VARIANT_NOT_FOUND} when no variant has a given id
+     */
+    void restoreStock(Map<Long, Integer> quantitiesByVariantId);
 }
