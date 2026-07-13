@@ -395,6 +395,98 @@ class ProductServiceImplTest {
         verifyNoInteractions(productImageRepository, productImageMapper, productVariantService);
     }
 
+    // ----- Live rating aggregation (Sprint 5) -----
+
+    /**
+     * Catalog search fills each summary's {@code averageRating} with the live value the review
+     * service aggregates — replacing the Sprint 2 placeholder — for products that have reviews.
+     */
+    @Test
+    void searchProductsReflectsLiveAverageRating() {
+        init();
+        Product product = product(1L);
+        Pageable pageable = PageRequest.of(0, 20);
+        when(productRepository.search(null, null, null, pageable))
+                .thenReturn(new PageImpl<>(List.of(product), pageable, 1));
+        when(productImageRepository.findPrimaryByProductIdIn(List.of(1L))).thenReturn(List.of());
+        when(productVariantService.getPurchasableStateByProductIds(List.of(1L))).thenReturn(Map.of(1L, true));
+        when(reviewService.getRatingSummaries(List.of(1L)))
+                .thenReturn(Map.of(1L, new RatingSummary(new BigDecimal("4.50"), 3)));
+
+        PageResponse<ProductSummaryResponse> result = service.searchProducts(null, null, null, pageable);
+
+        assertThat(result.content().get(0).averageRating()).isEqualByComparingTo("4.50");
+    }
+
+    /**
+     * Catalog search attaches ratings with a single batch aggregation query per page — never a
+     * per-product N+1: the batch read runs once and the single-product read is never touched.
+     */
+    @Test
+    void searchProductsIssuesOneBatchRatingQueryWithoutNPlusOne() {
+        init();
+        Product first = product(1L);
+        Product second = product(2L);
+        second.setName("Air Max");
+        Pageable pageable = PageRequest.of(0, 20);
+        when(productRepository.search(null, null, null, pageable))
+                .thenReturn(new PageImpl<>(List.of(first, second), pageable, 2));
+        when(productImageRepository.findPrimaryByProductIdIn(List.of(1L, 2L))).thenReturn(List.of());
+        when(productVariantService.getPurchasableStateByProductIds(List.of(1L, 2L))).thenReturn(Map.of());
+        when(reviewService.getRatingSummaries(List.of(1L, 2L)))
+                .thenReturn(Map.of(1L, new RatingSummary(new BigDecimal("5.00"), 1)));
+
+        service.searchProducts(null, null, null, pageable);
+
+        verify(reviewService).getRatingSummaries(List.of(1L, 2L));
+        verify(reviewService, never()).getRatingSummary(any());
+    }
+
+    /**
+     * Within one batch, a reviewed product carries its live average while an unreviewed one falls
+     * back to exactly {@code 0.00} (the Sprint 2 placeholder value, retained for products with no
+     * reviews).
+     */
+    @Test
+    void getSummariesByIdsFallsBackToZeroForUnreviewedProductInBatch() {
+        init();
+        Product reviewed = product(1L);
+        Product unreviewed = product(2L);
+        unreviewed.setName("Air Max");
+        List<Long> ids = List.of(1L, 2L);
+        when(productRepository.findByIdInAndDeletedAtIsNull(ids)).thenReturn(List.of(reviewed, unreviewed));
+        when(productImageRepository.findPrimaryByProductIdIn(ids)).thenReturn(List.of());
+        when(productVariantService.getPurchasableStateByProductIds(ids)).thenReturn(Map.of());
+        when(reviewService.getRatingSummaries(ids))
+                .thenReturn(Map.of(1L, new RatingSummary(new BigDecimal("3.00"), 5)));
+
+        Map<Long, ProductSummaryResponse> result = service.getSummariesByIds(ids);
+
+        assertThat(result.get(1L).averageRating()).isEqualByComparingTo("3.00");
+        assertThat(result.get(2L).averageRating()).isEqualByComparingTo("0.00");
+    }
+
+    /**
+     * Product detail carries the live average <em>and</em> review count the review service computes
+     * for a reviewed product — the placeholders are retired without changing the response shape.
+     */
+    @Test
+    void getProductDetailReflectsLiveAverageRatingAndCount() {
+        init();
+        Product product = product(1L);
+        when(productRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(product));
+        when(productImageRepository.findByProductIdOrderByDisplayOrderAsc(1L)).thenReturn(List.of());
+        when(productVariantService.getVariantsByProduct(1L)).thenReturn(List.of());
+        when(productVariantService.hasPurchasableVariant(1L)).thenReturn(true);
+        when(reviewService.getRatingSummary(1L))
+                .thenReturn(new RatingSummary(new BigDecimal("4.33"), 3));
+
+        ProductDetailResponse result = service.getProductDetail(1L);
+
+        assertThat(result.averageRating()).isEqualByComparingTo("4.33");
+        assertThat(result.reviewCount()).isEqualTo(3);
+    }
+
     // ----- Write: create product -----
 
     private Category category(Long id, String name) {

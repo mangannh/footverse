@@ -312,4 +312,126 @@ class OpenApiDocumentationTest {
                 .andExpect(jsonPath("$.paths['/api/v1/coupons'].get.responses.200.content.*.schema.$ref")
                         .value("#/components/schemas/ApiResponsePageResponseCouponResponse"));
     }
+
+    /**
+     * The public review listing documents its real statuses and, being anonymous (security-spec §6),
+     * documents neither {@code 401} nor {@code 403} and carries no security requirement — the padlock
+     * must be absent (sprint-5-plan item 09). Its only error is the {@code 400} path-variable mismatch,
+     * mirroring the public catalog reads.
+     */
+    @Test
+    void publicReviewListingDocumentsNoAuthErrorsAndNoPadlock() throws Exception {
+        apiDocs()
+                .andExpect(jsonPath("$.paths['/api/v1/products/{id}/reviews'].get.responses.200").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/products/{id}/reviews'].get.responses.400").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/products/{id}/reviews'].get.responses.401").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/v1/products/{id}/reviews'].get.responses.403").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/v1/products/{id}/reviews'].get.security").doesNotExist());
+    }
+
+    /**
+     * The CUSTOMER review writes document exactly the statuses each can really return (error-spec
+     * §8.12, security-spec §6/§7): create ({@code 201}/{@code 400}/{@code 401}/{@code 403}/{@code 409},
+     * never {@code 404} — eligibility subsumes product existence), update and delete
+     * ({@code 200}/{@code 400}/{@code 401}/{@code 403}/{@code 404}, never {@code 409}). The {@code 403}
+     * carries both the role denial and the ownership rejection; the {@code 400} on every write is the
+     * path-variable / body validation failure.
+     */
+    @Test
+    void reviewWriteOperationsDocumentTheirStatuses() throws Exception {
+        apiDocs()
+                .andExpect(jsonPath("$.paths['/api/v1/reviews'].post.responses.201").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews'].post.responses.400").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews'].post.responses.401").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews'].post.responses.403").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews'].post.responses.409").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews'].post.responses.404").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].put.responses.200").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].put.responses.400").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].put.responses.401").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].put.responses.403").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].put.responses.404").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].put.responses.409").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].delete.responses.200").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].delete.responses.400").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].delete.responses.401").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].delete.responses.403").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].delete.responses.404").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].delete.responses.409").doesNotExist());
+    }
+
+    /**
+     * Every review write is restricted to CUSTOMER by the frozen matrix, so each carries the bearer
+     * padlock; the public listing carries none (security-spec §6).
+     */
+    @Test
+    void reviewWriteOperationsCarryTheBearerPadlockAndListingDoesNot() throws Exception {
+        apiDocs()
+                .andExpect(jsonPath("$.paths['/api/v1/reviews'].post.security[0].bearerAuth").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].put.security[0].bearerAuth").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].delete.security[0].bearerAuth").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/products/{id}/reviews'].get.security").doesNotExist());
+    }
+
+    /**
+     * The self-service profile and credential operations document exactly their statuses
+     * (dto-spec §20, error-spec §8.2 + the user credential addition, security-spec §6). All three are
+     * open to CUSTOMER and ADMIN alike (self only), so none documents the role denial {@code 403}. The
+     * profile update and the email change document the uniqueness {@code 409}; the password change
+     * mutates no unique column, so it documents <strong>no</strong> {@code 409} (sprint-5-plan item 09
+     * requires verifying this explicitly).
+     */
+    @Test
+    void userProfileAndCredentialOperationsDocumentTheirStatuses() throws Exception {
+        apiDocs()
+                .andExpect(jsonPath("$.paths['/api/v1/users/me'].put.responses.200").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me'].put.responses.400").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me'].put.responses.401").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me'].put.responses.409").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me'].put.responses.403").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/password'].patch.responses.200").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/password'].patch.responses.400").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/password'].patch.responses.401").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/password'].patch.responses.403").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/password'].patch.responses.409").doesNotExist())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/email'].patch.responses.200").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/email'].patch.responses.400").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/email'].patch.responses.401").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/email'].patch.responses.409").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/email'].patch.responses.403").doesNotExist());
+    }
+
+    /**
+     * Every {@code /users/me} write is authenticated (self only), so each carries the bearer padlock
+     * (security-spec §6).
+     */
+    @Test
+    void userProfileAndCredentialOperationsCarryTheBearerPadlock() throws Exception {
+        apiDocs()
+                .andExpect(jsonPath("$.paths['/api/v1/users/me'].put.security[0].bearerAuth").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/password'].patch.security[0].bearerAuth").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/email'].patch.security[0].bearerAuth").exists());
+    }
+
+    /**
+     * The new review and user error responses bind the shared error envelope schema, while their
+     * success responses keep the payload schema springdoc infers from the controller return type
+     * (api-guidelines §Swagger).
+     */
+    @Test
+    void reviewAndUserResponsesUseTheExpectedSchemas() throws Exception {
+        apiDocs()
+                .andExpect(jsonPath("$.paths['/api/v1/reviews'].post.responses.409"
+                        + ".content['application/json'].schema.$ref").value(ERROR_ENVELOPE_SCHEMA))
+                .andExpect(jsonPath("$.paths['/api/v1/reviews/{id}'].put.responses.404"
+                        + ".content['application/json'].schema.$ref").value(ERROR_ENVELOPE_SCHEMA))
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/email'].patch.responses.409"
+                        + ".content['application/json'].schema.$ref").value(ERROR_ENVELOPE_SCHEMA))
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/password'].patch.responses.400"
+                        + ".content['application/json'].schema.$ref").value(ERROR_ENVELOPE_SCHEMA))
+                .andExpect(jsonPath("$.paths['/api/v1/products/{id}/reviews'].get.responses.200.content.*.schema.$ref")
+                        .value("#/components/schemas/ApiResponsePageResponseReviewResponse"))
+                .andExpect(jsonPath("$.paths['/api/v1/users/me/email'].patch.responses.200.content.*.schema.$ref")
+                        .value("#/components/schemas/ApiResponseUserResponse"));
+    }
 }

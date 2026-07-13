@@ -62,6 +62,8 @@ import com.footverse.order.repository.CouponRepository;
 import com.footverse.order.repository.OrderItemRepository;
 import com.footverse.order.repository.OrderRepository;
 import com.footverse.product.dto.ProductVariantPurchaseSnapshot;
+import com.footverse.product.dto.ProductVariantResponse;
+import com.footverse.product.entity.ProductVariantStatus;
 import com.footverse.product.service.ProductVariantService;
 import com.footverse.user.entity.User;
 
@@ -1277,5 +1279,106 @@ class OrderServiceImplTest {
                 .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.BAD_REQUEST);
 
         verify(couponRepository, never()).save(any());
+    }
+
+    // ----- Review eligibility read (hasDeliveredOrderForProduct) -----
+
+    private static final Long REVIEW_PRODUCT_ID = 100L;
+    private static final Long REVIEW_VARIANT_ID = 21L;
+
+    private ProductVariantResponse variantResponse(Long id) {
+        return new ProductVariantResponse(id, "Black", "42", new BigDecimal("100.00"), 5,
+                ProductVariantStatus.ACTIVE, "SKU-" + id);
+    }
+
+    /**
+     * Returns {@code true} exactly when a {@code DELIVERED} order of the caller contains one of the
+     * product's variants: the caller and the product's variant ids are resolved, then the
+     * exists-style order read confirms a delivered line.
+     */
+    @Test
+    void hasDeliveredOrderForProductIsTrueWhenDeliveredOrderContainsProduct() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        when(productVariantService.getVariantsByProduct(REVIEW_PRODUCT_ID))
+                .thenReturn(List.of(variantResponse(REVIEW_VARIANT_ID)));
+        when(orderItemRepository.existsDeliveredOrderItemForUserAndProductVariants(
+                USER_ID, List.of(REVIEW_VARIANT_ID))).thenReturn(true);
+
+        assertThat(service.hasDeliveredOrderForProduct(REVIEW_PRODUCT_ID)).isTrue();
+    }
+
+    /**
+     * Returns {@code false} when the caller has no {@code DELIVERED} order containing the product —
+     * whether the product was never ordered or only ordered in a non-{@code DELIVERED} status, both of
+     * which the caller-and-status-scoped read reports as no matching delivered line.
+     */
+    @Test
+    void hasDeliveredOrderForProductIsFalseWhenNoDeliveredLineMatches() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        when(productVariantService.getVariantsByProduct(REVIEW_PRODUCT_ID))
+                .thenReturn(List.of(variantResponse(REVIEW_VARIANT_ID)));
+        when(orderItemRepository.existsDeliveredOrderItemForUserAndProductVariants(
+                USER_ID, List.of(REVIEW_VARIANT_ID))).thenReturn(false);
+
+        assertThat(service.hasDeliveredOrderForProduct(REVIEW_PRODUCT_ID)).isFalse();
+    }
+
+    /**
+     * The read is caller-scoped: another user's delivered order does not count, because the exists
+     * read is filtered by the caller's own id (resolved through {@link CurrentUserProvider}, never a
+     * client-supplied id), so it returns {@code false} for the caller.
+     */
+    @Test
+    void hasDeliveredOrderForProductIsFalseForAnotherUsersDeliveredOrder() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        when(productVariantService.getVariantsByProduct(REVIEW_PRODUCT_ID))
+                .thenReturn(List.of(variantResponse(REVIEW_VARIANT_ID)));
+        when(orderItemRepository.existsDeliveredOrderItemForUserAndProductVariants(
+                USER_ID, List.of(REVIEW_VARIANT_ID))).thenReturn(false);
+
+        assertThat(service.hasDeliveredOrderForProduct(REVIEW_PRODUCT_ID)).isFalse();
+        ArgumentCaptor<Long> userId = ArgumentCaptor.forClass(Long.class);
+        verify(orderItemRepository).existsDeliveredOrderItemForUserAndProductVariants(userId.capture(), anyList());
+        assertThat(userId.getValue()).isEqualTo(USER_ID);
+    }
+
+    /**
+     * A product with no variants is never eligible: the read short-circuits to {@code false} without
+     * querying the order items.
+     */
+    @Test
+    void hasDeliveredOrderForProductIsFalseForProductWithoutVariants() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        when(productVariantService.getVariantsByProduct(REVIEW_PRODUCT_ID)).thenReturn(List.of());
+
+        assertThat(service.hasDeliveredOrderForProduct(REVIEW_PRODUCT_ID)).isFalse();
+        verify(orderItemRepository, never())
+                .existsDeliveredOrderItemForUserAndProductVariants(any(), any());
+    }
+
+    /**
+     * The read passes exactly the product's resolved variant ids to the exists query — proving the
+     * variant ids come from the product-variant service, not the client.
+     */
+    @Test
+    void hasDeliveredOrderForProductQueriesTheResolvedVariantIds() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        when(productVariantService.getVariantsByProduct(REVIEW_PRODUCT_ID))
+                .thenReturn(List.of(variantResponse(REVIEW_VARIANT_ID), variantResponse(22L)));
+        when(orderItemRepository.existsDeliveredOrderItemForUserAndProductVariants(
+                eq(USER_ID), anyList())).thenReturn(true);
+
+        service.hasDeliveredOrderForProduct(REVIEW_PRODUCT_ID);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Long>> variantIds = ArgumentCaptor.forClass(List.class);
+        verify(orderItemRepository)
+                .existsDeliveredOrderItemForUserAndProductVariants(eq(USER_ID), variantIds.capture());
+        assertThat(variantIds.getValue()).containsExactly(REVIEW_VARIANT_ID, 22L);
     }
 }

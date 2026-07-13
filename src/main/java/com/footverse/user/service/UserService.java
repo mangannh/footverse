@@ -2,6 +2,8 @@ package com.footverse.user.service;
 
 import java.util.Optional;
 
+import com.footverse.user.dto.ChangeEmailRequest;
+import com.footverse.user.dto.ChangePasswordRequest;
 import com.footverse.user.dto.UpdateProfileRequest;
 import com.footverse.user.dto.UserResponse;
 import com.footverse.user.entity.User;
@@ -34,6 +36,40 @@ public interface UserService {
      *         USER_PHONE_DUPLICATED} when the phone belongs to another account
      */
     UserResponse updateProfile(UpdateProfileRequest request);
+
+    /**
+     * Changes the authenticated caller's password (security-spec §6 — self only, re-auth). The caller
+     * is resolved through {@code CurrentUserProvider}, never a request field. The supplied
+     * {@code currentPassword} is verified against the stored BCrypt hash with the shared
+     * {@code PasswordEncoder}; on success the new password is encoded and stored. No token is revoked
+     * (sprint-5-plan assumption 7). A new password equal to the current one is permitted — no frozen
+     * rule forbids it.
+     *
+     * @param request the validated change-password payload (current password, new password)
+     * @throws com.footverse.common.exception.BusinessException {@code 400
+     *         USER_CURRENT_PASSWORD_INVALID} when {@code currentPassword} does not match the stored
+     *         hash; nothing is changed in that case
+     */
+    void changePassword(ChangePasswordRequest request);
+
+    /**
+     * Changes the authenticated caller's email (security-spec §6 — self only, re-auth). The caller is
+     * resolved through {@code CurrentUserProvider}, never a request field. The supplied
+     * {@code currentPassword} is verified against the stored BCrypt hash. The new email is normalized
+     * lowercase and must not belong to <strong>another</strong> account; resubmitting the caller's own
+     * current email is an idempotent no-op returning {@code 200}, not a conflict (the coupon-update /
+     * profile-phone precedent). No token is revoked (sprint-5-plan assumption 7): after the change the
+     * old access token stops resolving naturally because its subject is the former email.
+     *
+     * @param request the validated change-email payload (new email, current password)
+     * @return the caller's refreshed profile carrying the new email
+     * @throws com.footverse.common.exception.BusinessException {@code 400
+     *         USER_CURRENT_PASSWORD_INVALID} when {@code currentPassword} does not match the stored
+     *         hash; nothing is changed in that case
+     * @throws com.footverse.common.exception.DuplicateResourceException {@code 409
+     *         USER_EMAIL_DUPLICATED} when the new email belongs to another account
+     */
+    UserResponse changeEmail(ChangeEmailRequest request);
 
     /**
      * Checks whether an account with the given email already exists.

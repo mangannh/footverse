@@ -2,12 +2,15 @@ package com.footverse.user.controller;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.footverse.common.dto.ApiResponse;
+import com.footverse.user.dto.ChangeEmailRequest;
+import com.footverse.user.dto.ChangePasswordRequest;
 import com.footverse.user.dto.UpdateProfileRequest;
 import com.footverse.user.dto.UserResponse;
 import com.footverse.user.service.UserService;
@@ -90,5 +93,74 @@ public class UserController {
     public ResponseEntity<ApiResponse<UserResponse>> updateProfile(
             @Valid @RequestBody UpdateProfileRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(userService.updateProfile(request)));
+    }
+
+    /**
+     * Changes the authenticated caller's password. The caller re-authenticates with
+     * {@code currentPassword}, verified against the stored BCrypt hash; a wrong current password is the
+     * enveloped {@code 400 USER_CURRENT_PASSWORD_INVALID} (an authenticated-request rejection, never a
+     * {@code 401}). No token is revoked. The caller is always resolved from the access token; there is
+     * no path or query parameter, so a user can only ever change their own password.
+     *
+     * @param request the validated change-password payload
+     * @return {@code 200 OK} with an empty payload
+     */
+    @Operation(summary = "Change the current authenticated user's password")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "The password was changed"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                    description = "VALIDATION_ERROR - a field failed validation, or the body is malformed; "
+                            + "USER_CURRENT_PASSWORD_INVALID - the current password is incorrect",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class))),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "UNAUTHORIZED - missing, invalid, or expired access token",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class)))
+    })
+    @SecurityRequirement(name = "bearerAuth")
+    @PatchMapping("/me/password")
+    public ResponseEntity<ApiResponse<Void>> changePassword(
+            @Valid @RequestBody ChangePasswordRequest request) {
+        userService.changePassword(request);
+        return ResponseEntity.ok(ApiResponse.<Void>ok(null));
+    }
+
+    /**
+     * Changes the authenticated caller's email. The caller re-authenticates with
+     * {@code currentPassword}; a wrong current password is the enveloped
+     * {@code 400 USER_CURRENT_PASSWORD_INVALID}. The new email is normalized lowercase and must not
+     * belong to another account, else {@code 409 USER_EMAIL_DUPLICATED}; resubmitting one's own current
+     * email is an idempotent {@code 200}. No token is revoked — the old access token stops resolving
+     * naturally once the email changes. The caller is always resolved from the access token; there is
+     * no path or query parameter, so a user can only ever change their own email.
+     *
+     * @param request the validated change-email payload
+     * @return {@code 200 OK} with the caller's refreshed {@link UserResponse}
+     */
+    @Operation(summary = "Change the current authenticated user's email")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "The caller's refreshed profile carrying the new email"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                    description = "VALIDATION_ERROR - a field failed validation, or the body is malformed; "
+                            + "USER_CURRENT_PASSWORD_INVALID - the current password is incorrect",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class))),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "UNAUTHORIZED - missing, invalid, or expired access token",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class))),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+                    description = "USER_EMAIL_DUPLICATED - the email belongs to another account",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class)))
+    })
+    @SecurityRequirement(name = "bearerAuth")
+    @PatchMapping("/me/email")
+    public ResponseEntity<ApiResponse<UserResponse>> changeEmail(
+            @Valid @RequestBody ChangeEmailRequest request) {
+        return ResponseEntity.ok(ApiResponse.ok(userService.changeEmail(request)));
     }
 }

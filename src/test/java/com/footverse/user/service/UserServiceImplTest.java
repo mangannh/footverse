@@ -15,11 +15,15 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.LocalDateTime;
 
+import com.footverse.common.exception.BusinessException;
 import com.footverse.common.exception.DuplicateResourceException;
 import com.footverse.common.security.CurrentUserProvider;
+import com.footverse.user.dto.ChangeEmailRequest;
+import com.footverse.user.dto.ChangePasswordRequest;
 import com.footverse.user.dto.UpdateProfileRequest;
 import com.footverse.user.dto.UserResponse;
 import com.footverse.user.entity.Role;
@@ -42,11 +46,14 @@ class UserServiceImplTest {
     @Mock
     private CurrentUserProvider currentUserProvider;
 
+    @Mock
+    private PasswordEncoder passwordEncoder;
+
     private UserServiceImpl userService;
 
     @BeforeEach
     void setUp() {
-        userService = new UserServiceImpl(userRepository, userMapper, currentUserProvider);
+        userService = new UserServiceImpl(userRepository, userMapper, currentUserProvider, passwordEncoder);
     }
 
     /**
@@ -210,6 +217,190 @@ class UserServiceImplTest {
                 new UpdateProfileRequest("New Name", "0912345678", null)))
                 .isInstanceOf(DuplicateResourceException.class)
                 .hasFieldOrPropertyWithValue("errorCode", "USER_PHONE_DUPLICATED")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.CONFLICT);
+    }
+
+    // ----- Change password -----
+
+    /**
+     * A correct current password is verified with {@link PasswordEncoder#matches} (never a hand-rolled
+     * hash comparison); the new password is BCrypt-encoded and the encoded hash — not the raw value —
+     * is stored on the caller.
+     */
+    @Test
+    void changePasswordWithCorrectCurrentPasswordEncodesAndStoresNewHash() {
+        User caller = caller();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller);
+        when(passwordEncoder.matches("Password1", "hashed-password")).thenReturn(true);
+        when(passwordEncoder.encode("NewPassword1")).thenReturn("new-hash");
+
+        userService.changePassword(new ChangePasswordRequest("Password1", "NewPassword1"));
+
+        assertThat(caller.getPassword()).isEqualTo("new-hash");
+        verify(passwordEncoder).matches("Password1", "hashed-password");
+        verify(passwordEncoder).encode("NewPassword1");
+        verify(userRepository).save(caller);
+    }
+
+    /**
+     * A wrong current password is the enveloped {@code 400 USER_CURRENT_PASSWORD_INVALID}; nothing is
+     * encoded, nothing is saved, and the stored hash is untouched.
+     */
+    @Test
+    void changePasswordWithWrongCurrentPasswordThrows400AndKeepsOldPassword() {
+        User caller = caller();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller);
+        when(passwordEncoder.matches("wrong-password", "hashed-password")).thenReturn(false);
+
+        assertThatThrownBy(() -> userService.changePassword(
+                new ChangePasswordRequest("wrong-password", "NewPassword1")))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "USER_CURRENT_PASSWORD_INVALID")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.BAD_REQUEST);
+        assertThat(caller.getPassword()).isEqualTo("hashed-password");
+        verify(passwordEncoder, never()).encode(any());
+        verify(userRepository, never()).save(any());
+    }
+
+    /**
+     * A new password equal to the current one is permitted — no frozen rule forbids it, so the service
+     * invents none: it re-encodes and stores the value like any other change.
+     */
+    @Test
+    void changePasswordAllowsNewPasswordEqualToCurrent() {
+        User caller = caller();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller);
+        when(passwordEncoder.matches("Password1", "hashed-password")).thenReturn(true);
+        when(passwordEncoder.encode("Password1")).thenReturn("rehashed-same");
+
+        userService.changePassword(new ChangePasswordRequest("Password1", "Password1"));
+
+        assertThat(caller.getPassword()).isEqualTo("rehashed-same");
+        verify(userRepository).save(caller);
+    }
+
+    // ----- Change email -----
+
+    private UserResponse mappedWithEmail(String email) {
+        return new UserResponse(7L, email, "Old Name", "0900000000", "http://old-avatar",
+                Role.CUSTOMER, true, LocalDateTime.now(), LocalDateTime.now());
+    }
+
+    /**
+     * A correct current password and an email free for use updates the caller's email (re-auth via
+     * {@link PasswordEncoder#matches}) and returns the refreshed profile.
+     */
+    @Test
+    void changeEmailWithCorrectPasswordAndFreeEmailUpdates() {
+        User caller = caller();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller);
+        when(passwordEncoder.matches("Password1", "hashed-password")).thenReturn(true);
+        when(userRepository.existsByEmail("new@example.com")).thenReturn(false);
+        when(userRepository.saveAndFlush(caller)).thenReturn(caller);
+        when(userMapper.toResponse(caller)).thenReturn(mappedWithEmail("new@example.com"));
+
+        UserResponse result = userService.changeEmail(new ChangeEmailRequest("new@example.com", "Password1"));
+
+        assertThat(caller.getEmail()).isEqualTo("new@example.com");
+        assertThat(result.email()).isEqualTo("new@example.com");
+        verify(passwordEncoder).matches("Password1", "hashed-password");
+    }
+
+    /**
+     * The new email is normalized to lowercase before the uniqueness check and before it is stored.
+     */
+    @Test
+    void changeEmailNormalizesNewEmailToLowercase() {
+        User caller = caller();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller);
+        when(passwordEncoder.matches("Password1", "hashed-password")).thenReturn(true);
+        when(userRepository.existsByEmail("new@example.com")).thenReturn(false);
+        when(userRepository.saveAndFlush(caller)).thenReturn(caller);
+        when(userMapper.toResponse(caller)).thenReturn(mappedWithEmail("new@example.com"));
+
+        userService.changeEmail(new ChangeEmailRequest("NEW@Example.COM", "Password1"));
+
+        assertThat(caller.getEmail()).isEqualTo("new@example.com");
+        verify(userRepository).existsByEmail("new@example.com");
+    }
+
+    /**
+     * Resubmitting the caller's own current email is an idempotent no-op, not a conflict: the
+     * uniqueness check is skipped (it would trip on the caller's own row) and no {@code 409} is thrown.
+     */
+    @Test
+    void changeEmailWithOwnCurrentEmailIsNoOpNotConflict() {
+        User caller = caller();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller);
+        when(passwordEncoder.matches("Password1", "hashed-password")).thenReturn(true);
+        when(userRepository.saveAndFlush(caller)).thenReturn(caller);
+        when(userMapper.toResponse(caller)).thenReturn(mappedWithEmail("caller@example.com"));
+
+        UserResponse result = userService.changeEmail(new ChangeEmailRequest("Caller@Example.com", "Password1"));
+
+        assertThat(caller.getEmail()).isEqualTo("caller@example.com");
+        assertThat(result.email()).isEqualTo("caller@example.com");
+        verify(userRepository, never()).existsByEmail(any());
+    }
+
+    /**
+     * An email held by another account is the enveloped {@code 409 USER_EMAIL_DUPLICATED}; nothing is
+     * persisted.
+     */
+    @Test
+    void changeEmailWithEmailTakenByAnotherAccountThrowsConflict() {
+        User caller = caller();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller);
+        when(passwordEncoder.matches("Password1", "hashed-password")).thenReturn(true);
+        when(userRepository.existsByEmail("taken@example.com")).thenReturn(true);
+
+        assertThatThrownBy(() -> userService.changeEmail(
+                new ChangeEmailRequest("taken@example.com", "Password1")))
+                .isInstanceOf(DuplicateResourceException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "USER_EMAIL_DUPLICATED")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.CONFLICT);
+        verify(userRepository, never()).saveAndFlush(any());
+    }
+
+    /**
+     * A wrong current password on the email change is the enveloped {@code 400
+     * USER_CURRENT_PASSWORD_INVALID}; the uniqueness check never runs, nothing is persisted, and the
+     * stored email is untouched.
+     */
+    @Test
+    void changeEmailWithWrongCurrentPasswordThrows400AndKeepsOldEmail() {
+        User caller = caller();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller);
+        when(passwordEncoder.matches("wrong-password", "hashed-password")).thenReturn(false);
+
+        assertThatThrownBy(() -> userService.changeEmail(
+                new ChangeEmailRequest("new@example.com", "wrong-password")))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "USER_CURRENT_PASSWORD_INVALID")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.BAD_REQUEST);
+        assertThat(caller.getEmail()).isEqualTo("caller@example.com");
+        verify(userRepository, never()).existsByEmail(any());
+        verify(userRepository, never()).saveAndFlush(any());
+    }
+
+    /**
+     * The database backstop: a new email that passes the service-level guard but loses a race and
+     * trips the {@code uk_user_email} unique constraint is translated to the same enveloped
+     * {@code 409 USER_EMAIL_DUPLICATED}, never a leaked {@code 500}.
+     */
+    @Test
+    void changeEmailTranslatesUniqueViolationToConflict() {
+        User caller = caller();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller);
+        when(passwordEncoder.matches("Password1", "hashed-password")).thenReturn(true);
+        when(userRepository.existsByEmail("new@example.com")).thenReturn(false);
+        when(userRepository.saveAndFlush(caller))
+                .thenThrow(new DataIntegrityViolationException("uk_user_email"));
+
+        assertThatThrownBy(() -> userService.changeEmail(
+                new ChangeEmailRequest("new@example.com", "Password1")))
+                .isInstanceOf(DuplicateResourceException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "USER_EMAIL_DUPLICATED")
                 .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.CONFLICT);
     }
 }
