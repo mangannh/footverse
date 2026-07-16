@@ -52,6 +52,12 @@ class _AccountScreenState extends State<AccountScreen> {
               trailing: const Icon(Icons.chevron_right),
               onTap: () => context.pushNamed(AppRoute.wishlist),
             ),
+            ListTile(
+              leading: const Icon(Icons.receipt_long_outlined),
+              title: const Text('My Orders'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.pushNamed(AppRoute.orders),
+            ),
             const Divider(),
             const SizedBox(height: 16),
             FilledButton(

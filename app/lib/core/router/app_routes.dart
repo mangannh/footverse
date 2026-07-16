@@ -16,4 +16,7 @@ class AppRoute {
   static const String addressForm = 'addressForm';
   static const String cart = 'cart';
   static const String wishlist = 'wishlist';
+  static const String checkout = 'checkout';
+  static const String orders = 'orders';
+  static const String orderDetail = 'orderDetail';
 }

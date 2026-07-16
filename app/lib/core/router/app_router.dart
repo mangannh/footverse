@@ -9,6 +9,10 @@ import '../../features/auth/screens/account_screen.dart';
 import '../../features/auth/screens/login_screen.dart';
 import '../../features/auth/screens/register_screen.dart';
 import '../../features/cart/screens/cart_screen.dart';
+import '../../features/order/repositories/order_repository.dart';
+import '../../features/order/screens/checkout_screen.dart';
+import '../../features/order/screens/order_detail_screen.dart';
+import '../../features/order/screens/order_list_screen.dart';
 import '../../features/product/repositories/brand_repository.dart';
 import '../../features/product/repositories/category_repository.dart';
 import '../../features/product/repositories/product_repository.dart';
@@ -31,15 +35,24 @@ const String _addressesPath = '/addresses';
 const String _addressFormPath = 'form';
 const String _cartPath = '/cart';
 const String _wishlistPath = '/wishlist';
+const String _checkoutPath = '/checkout';
+const String _ordersPath = '/orders';
+// Relative to `_ordersPath`, so the order detail is a child of the order list and
+// back-navigation stacks naturally (mirrors the catalog → detail nesting).
+const String _orderDetailPath = ':id';
 
 // The signed-in-only area. A location under any of these paths requires a token;
 // the redirect algorithm below is unchanged — only the guarded set grew from the
-// single `_accountPath` (sprint-6-plan item 07) to include the Sprint 7 routes.
+// single `_accountPath` (sprint-6-plan item 07) to include the Sprint 7 routes
+// and, now, the Sprint 8 checkout / order routes. `_ordersPath` also guards its
+// nested order-detail child, since the guard matches any location under a path.
 const List<String> _authenticatedPaths = <String>[
   _accountPath,
   _addressesPath,
   _cartPath,
   _wishlistPath,
+  _checkoutPath,
+  _ordersPath,
 ];
 
 /// Builds the `go_router` configuration (flutter-guidelines §Routing).
@@ -57,6 +70,7 @@ GoRouter createAppRouter(
   CategoryRepository categoryRepository,
   BrandRepository brandRepository,
   AddressRepository addressRepository,
+  OrderRepository orderRepository,
 ) {
   return GoRouter(
     initialLocation: _catalogPath,
@@ -120,6 +134,31 @@ GoRouter createAppRouter(
         path: _wishlistPath,
         name: AppRoute.wishlist,
         builder: (context, state) => const WishlistScreen(),
+      ),
+      GoRoute(
+        path: _checkoutPath,
+        name: AppRoute.checkout,
+        builder: (context, state) => CheckoutScreen(
+          orderRepository: orderRepository,
+          addressRepository: addressRepository,
+          cartItemIds: (state.extra as List<int>?) ?? const <int>[],
+        ),
+      ),
+      GoRoute(
+        path: _ordersPath,
+        name: AppRoute.orders,
+        builder: (context, state) =>
+            OrderListScreen(orderRepository: orderRepository),
+        routes: <RouteBase>[
+          GoRoute(
+            path: _orderDetailPath,
+            name: AppRoute.orderDetail,
+            builder: (context, state) => OrderDetailScreen(
+              orderId: int.parse(state.pathParameters['id']!),
+              orderRepository: orderRepository,
+            ),
+          ),
+        ],
       ),
     ],
   );

@@ -11,6 +11,7 @@ import 'features/address/repositories/address_repository.dart';
 import 'features/auth/repositories/auth_repository.dart';
 import 'features/cart/providers/cart_provider.dart';
 import 'features/cart/repositories/cart_repository.dart';
+import 'features/order/repositories/order_repository.dart';
 import 'features/product/repositories/brand_repository.dart';
 import 'features/product/repositories/category_repository.dart';
 import 'features/product/repositories/product_repository.dart';
@@ -73,6 +74,7 @@ Future<void> main() async {
         CategoryRepository(dio),
         BrandRepository(dio),
         AddressRepository(dio),
+        OrderRepository(dio),
       ),
     ),
   );

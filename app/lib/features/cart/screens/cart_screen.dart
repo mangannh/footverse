@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/error/app_exception.dart';
+import '../../../core/router/app_routes.dart';
 import '../models/cart_response.dart';
 import '../providers/cart_provider.dart';
 import '../widgets/cart_line_tile.dart';
@@ -21,6 +23,14 @@ class CartScreen extends StatefulWidget {
 }
 
 class _CartScreenState extends State<CartScreen> {
+  // Screen-local selection state (the product-detail variant-selection precedent,
+  // sprint-7-plan item 07 — never provider state). It holds the ids the caller
+  // explicitly *deselected*, so an empty set means every available line is
+  // selected by default (sprint-8-plan item 04). Tracking the deselection keeps
+  // the default correct on the first frame and as the cart changes, without
+  // re-syncing against the async cart.
+  final Set<int> _deselectedIds = <int>{};
+
   @override
   void initState() {
     super.initState();
@@ -30,6 +40,30 @@ class _CartScreenState extends State<CartScreen> {
         context.read<CartProvider>().load();
       }
     });
+  }
+
+  /// The ids of the currently selected lines: every available line the caller has
+  /// not deselected. Unavailable lines can never be selected (business-rules →
+  /// Checkout — only an active, in-stock variant can be purchased).
+  List<int> _selectedIds(CartResponse cart) => <int>[
+    for (final item in cart.items)
+      if (item.available && !_deselectedIds.contains(item.id)) item.id,
+  ];
+
+  void _toggleSelection(int cartItemId, bool selected) {
+    setState(() {
+      if (selected) {
+        _deselectedIds.remove(cartItemId);
+      } else {
+        _deselectedIds.add(cartItemId);
+      }
+    });
+  }
+
+  /// Navigates to the checkout route with the selected cart line ids as the typed
+  /// `extra` (sprint-8-plan item 04).
+  void _goToCheckout(List<int> cartItemIds) {
+    context.pushNamed(AppRoute.checkout, extra: cartItemIds);
   }
 
   /// Runs a provider mutation and renders any [AppException] as a `SnackBar`.
@@ -74,6 +108,7 @@ class _CartScreenState extends State<CartScreen> {
 
   Widget _buildCart(CartProvider provider, CartResponse cart) {
     final items = cart.items;
+    final selectedIds = _selectedIds(cart);
     return Column(
       children: <Widget>[
         Expanded(
@@ -85,6 +120,10 @@ class _CartScreenState extends State<CartScreen> {
               return CartLineTile(
                 item: item,
                 enabled: !provider.isMutating,
+                selected: item.available && !_deselectedIds.contains(item.id),
+                onSelectionChanged: item.available
+                    ? (value) => _toggleSelection(item.id, value)
+                    : null,
                 onIncrement: () => _runMutation(
                   () => provider.updateQuantity(item.id, item.quantity + 1),
                 ),
@@ -100,19 +139,37 @@ class _CartScreenState extends State<CartScreen> {
             },
           ),
         ),
-        _CartSummary(subtotal: cart.subtotal, itemCount: cart.itemCount),
+        _CartSummary(
+          subtotal: cart.subtotal,
+          itemCount: cart.itemCount,
+          selectedCount: selectedIds.length,
+          onCheckout: selectedIds.isEmpty
+              ? null
+              : () => _goToCheckout(selectedIds),
+        ),
       ],
     );
   }
 }
 
-/// The cart totals bar: the server's `subtotal` and `itemCount`, rendered exactly
-/// as delivered (dto-spec §12 — the client never recomputes them).
+/// The cart totals bar: the server's whole-cart `subtotal` and `itemCount`,
+/// rendered exactly as delivered (dto-spec §12 — the client never recomputes
+/// them), the count of selected lines, and the checkout entry
+/// (sprint-8-plan item 04). The selected subset's subtotal is **not** computed
+/// here — it comes from the checkout preview (sprint-8-plan item 05). [onCheckout]
+/// is null when no line is selected, which disables the button.
 class _CartSummary extends StatelessWidget {
-  const _CartSummary({required this.subtotal, required this.itemCount});
+  const _CartSummary({
+    required this.subtotal,
+    required this.itemCount,
+    required this.selectedCount,
+    required this.onCheckout,
+  });
 
   final double subtotal;
   final int itemCount;
+  final int selectedCount;
+  final VoidCallback? onCheckout;
 
   @override
   Widget build(BuildContext context) {
@@ -123,11 +180,27 @@ class _CartSummary extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: SafeArea(
           top: false,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text('Subtotal ($itemCount)', style: textTheme.titleMedium),
-              Text('$subtotal', style: textTheme.titleLarge),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: <Widget>[
+                  Text('Subtotal ($itemCount)', style: textTheme.titleMedium),
+                  Text('$subtotal', style: textTheme.titleLarge),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text('$selectedCount selected', style: textTheme.bodySmall),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: onCheckout,
+                  child: const Text('Checkout'),
+                ),
+              ),
             ],
           ),
         ),

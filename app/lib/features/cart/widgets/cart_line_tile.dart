@@ -2,20 +2,30 @@ import 'package:flutter/material.dart';
 
 import '../models/cart_item_response.dart';
 
-/// One cart line (dto-spec §12): image, name, colour / size, server-computed
-/// `unitPrice` and `lineTotal`, a quantity stepper, availability, and a separate
-/// remove action. It renders only — every money value is displayed exactly as
-/// the server delivered it and the client computes nothing (dto-spec §1).
+/// One cart line (dto-spec §12): a selection control, image, name, colour / size,
+/// server-computed `unitPrice` and `lineTotal`, a quantity stepper, availability,
+/// and a separate remove action. It renders only — every money value is displayed
+/// exactly as the server delivered it and the client computes nothing
+/// (dto-spec §1).
 ///
-/// [enabled] is false while any mutation is in flight, disabling every affordance
-/// so mutations stay single-flight. [onDecrement] is null at quantity 1 (the
-/// `quantity ≥ 1` lower bound — validation-spec §7), which disables the button so
-/// decrementing then does nothing; removing a line is only the [onRemove] action.
+/// [enabled] is false while any mutation is in flight, disabling every mutating
+/// affordance so mutations stay single-flight. [onDecrement] is null at quantity 1
+/// (the `quantity ≥ 1` lower bound — validation-spec §7), which disables the button
+/// so decrementing then does nothing; removing a line is only the [onRemove]
+/// action.
+///
+/// [onSelectionChanged] is null for a line that cannot be checked out (its variant
+/// is unavailable), which disables the selection checkbox — so the unavailable
+/// state is conveyed by the disabled control together with the icon-and-text
+/// [_UnavailableFlag], never by colour alone (flutter-guidelines §Accessibility).
+/// Selection is screen-local UI state owned by the parent (sprint-8-plan item 04).
 class CartLineTile extends StatelessWidget {
   const CartLineTile({
     super.key,
     required this.item,
     required this.enabled,
+    required this.selected,
+    required this.onSelectionChanged,
     required this.onIncrement,
     required this.onDecrement,
     required this.onRemove,
@@ -23,6 +33,8 @@ class CartLineTile extends StatelessWidget {
 
   final CartItemResponse item;
   final bool enabled;
+  final bool selected;
+  final ValueChanged<bool>? onSelectionChanged;
   final VoidCallback onIncrement;
   final VoidCallback? onDecrement;
   final VoidCallback onRemove;
@@ -30,6 +42,7 @@ class CartLineTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final onSelectionChanged = this.onSelectionChanged;
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Padding(
@@ -40,6 +53,13 @@ class CartLineTile extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
+                Checkbox(
+                  value: selected,
+                  onChanged: onSelectionChanged == null
+                      ? null
+                      : (value) => onSelectionChanged(value ?? false),
+                ),
+                const SizedBox(width: 4),
                 _Thumbnail(imageUrl: item.productImageUrl),
                 const SizedBox(width: 12),
                 Expanded(
