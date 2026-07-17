@@ -26,13 +26,19 @@ import com.footverse.order.entity.OrderItem;
 public interface OrderMapper {
 
     /**
-     * Maps an order item to its response representation. Pure single-entity mapping; every field
-     * maps by name.
+     * Maps an order item to its response representation. Pure single-entity mapping; every own field
+     * maps by name from {@code item}. The {@code productId} is <strong>not</strong> a field of the
+     * order line (it stores only {@code productVariantId}, database-spec §12) — it is resolved by
+     * {@code OrderService} through the {@code ProductVariantService} dependency the order module
+     * already has (architecture-spec §7) and passed in, exactly as {@code itemCount} and {@code items}
+     * are supplied to the aggregate mappings; the mapper performs no service or repository call.
      *
-     * @param item the order item entity
+     * @param item      the order item entity
+     * @param productId the owning product id, resolved by the service
      * @return the response DTO
      */
-    OrderItemResponse toResponse(OrderItem item);
+    @Mapping(target = "productId", source = "productId")
+    OrderItemResponse toResponse(OrderItem item, Long productId);
 
     /**
      * Maps an order to its summary response, copying only the order's own fields. The aggregate

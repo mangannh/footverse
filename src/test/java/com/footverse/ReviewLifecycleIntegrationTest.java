@@ -69,6 +69,9 @@ class ReviewLifecycleIntegrationTest {
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
 
+    /** The reviewing customer's id, captured on persist to assert the review's {@code userId} (item 01). */
+    private long customerId;
+
     ReviewLifecycleIntegrationTest(@Autowired MockMvc mockMvc, @Autowired JwtUtil jwtUtil,
             @Autowired UserRepository userRepository) {
         this.mockMvc = mockMvc;
@@ -79,7 +82,7 @@ class ReviewLifecycleIntegrationTest {
     @BeforeEach
     void persistUsers() {
         userRepository.save(AuthFixtures.admin(ADMIN_EMAIL, ADMIN_PHONE));
-        userRepository.save(AuthFixtures.customer(CUSTOMER_EMAIL, CUSTOMER_PHONE));
+        customerId = userRepository.save(AuthFixtures.customer(CUSTOMER_EMAIL, CUSTOMER_PHONE)).getId();
     }
 
     private String adminToken() {
@@ -175,7 +178,11 @@ class ReviewLifecycleIntegrationTest {
         // 4. An ADMIN walks the order through the status machine to DELIVERED.
         patchStatus(orderId, "CONFIRMED");
         patchStatus(orderId, "SHIPPING");
-        patchStatus(orderId, "DELIVERED").andExpect(jsonPath("$.data.status").value("DELIVERED"));
+        patchStatus(orderId, "DELIVERED")
+                .andExpect(jsonPath("$.data.status").value("DELIVERED"))
+                // OrderItemResponse.productId (item 01): the delivered line exposes its owning product id,
+                // resolved live from the variant — the eligibility-clear path from an order line to review.
+                .andExpect(jsonPath("$.data.items[0].productId").value((int) productId));
 
         // 5. Now the CUSTOMER can create the review (201); capture its id and audit timestamps.
         String createdJson = mockMvc.perform(post("/api/v1/reviews")
@@ -186,6 +193,10 @@ class ReviewLifecycleIntegrationTest {
                 .andExpect(jsonPath("$.data.rating").value(5))
                 .andExpect(jsonPath("$.data.comment").value("Excellent shoe"))
                 .andExpect(jsonPath("$.data.userFullName").value(AuthFixtures.FULL_NAME))
+                // ReviewResponse.productId / userId (item 01): the review links to its product and its
+                // author, so the client can recognise the caller's own review across sessions.
+                .andExpect(jsonPath("$.data.productId").value((int) productId))
+                .andExpect(jsonPath("$.data.userId").value((int) customerId))
                 .andReturn().getResponse().getContentAsString();
         long reviewId = ((Number) JsonPath.read(createdJson, "$.data.id")).longValue();
         LocalDateTime createdAt = LocalDateTime.parse(JsonPath.read(createdJson, "$.data.createdAt"));

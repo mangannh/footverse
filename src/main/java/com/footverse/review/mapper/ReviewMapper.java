@@ -17,13 +17,15 @@ public interface ReviewMapper {
 
     /**
      * Maps a review to its response representation. The author's {@code userFullName} and
-     * {@code userAvatarUrl} are taken from the review's {@code user} reference; every other field —
-     * {@code id}, {@code rating}, {@code comment}, and the inherited {@code createdAt} /
-     * {@code updatedAt} audit timestamps — maps by name.
+     * {@code userAvatarUrl} are taken from the review's {@code user} reference, and {@code userId}
+     * from that same reference's id; every other field — {@code id}, {@code productId} (the plain
+     * value the review stores, architecture-spec §8), {@code rating}, {@code comment}, and the
+     * inherited {@code createdAt} / {@code updatedAt} audit timestamps — maps by name.
      *
      * @param review the review entity
      * @return the response DTO
      */
+    @Mapping(target = "userId", source = "user.id")
     @Mapping(target = "userFullName", source = "user.fullName")
     @Mapping(target = "userAvatarUrl", source = "user.avatarUrl")
     ReviewResponse toResponse(Review review);

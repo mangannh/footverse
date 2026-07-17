@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../auth/providers/auth_provider.dart';
 import '../../cart/widgets/add_to_cart_button.dart';
+import '../../profile/repositories/profile_repository.dart';
+import '../../review/providers/review_provider.dart';
+import '../../review/repositories/review_repository.dart';
+import '../../review/widgets/review_write_section.dart';
 import '../../wishlist/widgets/wishlist_toggle.dart';
 import '../models/product_detail_response.dart';
 import '../models/product_image_response.dart';
@@ -24,16 +29,42 @@ class ProductDetailScreen extends StatelessWidget {
     super.key,
     required this.productId,
     required this.productRepository,
+    required this.reviewRepository,
+    required this.profileRepository,
   });
 
   final int productId;
   final ProductRepository productRepository;
+  final ReviewRepository reviewRepository;
+  final ProfileRepository profileRepository;
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider<ProductDetailProvider>(
-      create: (_) =>
-          ProductDetailProvider(productRepository, productId)..load(),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider<ProductDetailProvider>(
+          create: (_) =>
+              ProductDetailProvider(productRepository, productId)..load(),
+        ),
+        // Created after the detail provider so its create can read it and wire the
+        // public review reload; a guest never loads an identity (Design
+        // Decision 3), so the write affordance falls back to routing to login.
+        ChangeNotifierProvider<ReviewProvider>(
+          create: (context) {
+            final detailProvider = context.read<ProductDetailProvider>();
+            final provider = ReviewProvider(
+              reviewRepository: reviewRepository,
+              profileRepository: profileRepository,
+              productId: productId,
+              onReviewsChanged: () => detailProvider.retryReviews(),
+            );
+            if (context.read<AuthProvider>().isAuthenticated) {
+              provider.loadCurrentUser();
+            }
+            return provider;
+          },
+        ),
+      ],
       child: const _ProductDetailView(),
     );
   }
@@ -139,6 +170,12 @@ class _ProductDetailViewState extends State<_ProductDetailView> {
                 selectedVariantId: _selectedVariantId,
                 onSelectVariant: _selectVariant,
               ),
+            ),
+            // The review-owned write affordance, embedded above the public list
+            // (sprint-9-plan item 05). It reads the loaded reviews to resolve the
+            // caller's own review by userId; the review feature owns the writes.
+            SliverToBoxAdapter(
+              child: ReviewWriteSection(reviews: provider.reviews),
             ),
             ..._reviewSlivers(context, provider),
           ],

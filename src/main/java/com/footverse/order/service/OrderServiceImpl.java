@@ -216,7 +216,7 @@ public class OrderServiceImpl implements OrderService {
         // Remove exactly the checked-out lines; the cart row and unselected lines remain.
         cartService.removeCheckedOutItems(request.cartItemIds());
 
-        List<OrderItemResponse> itemResponses = items.stream().map(orderMapper::toResponse).toList();
+        List<OrderItemResponse> itemResponses = toItemResponses(items);
         return orderMapper.toDetailResponse(order, itemResponses);
     }
 
@@ -236,9 +236,7 @@ public class OrderServiceImpl implements OrderService {
         Long userId = currentUserProvider.getCurrentUser().getId();
         Order order = orderRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> unresolvableOrder(id));
-        List<OrderItemResponse> items = orderItemRepository.findByOrderId(order.getId()).stream()
-                .map(orderMapper::toResponse)
-                .toList();
+        List<OrderItemResponse> items = toItemResponses(orderItemRepository.findByOrderId(order.getId()));
         return orderMapper.toDetailResponse(order, items);
     }
 
@@ -268,7 +266,7 @@ public class OrderServiceImpl implements OrderService {
         }
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
         applyCancellation(order, items);
-        List<OrderItemResponse> itemResponses = items.stream().map(orderMapper::toResponse).toList();
+        List<OrderItemResponse> itemResponses = toItemResponses(items);
         return orderMapper.toDetailResponse(order, itemResponses);
     }
 
@@ -280,7 +278,7 @@ public class OrderServiceImpl implements OrderService {
                 .orElseThrow(() -> new ResourceNotFoundException(ORDER_NOT_FOUND_CODE, ORDER_NOT_FOUND_MESSAGE));
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
         applyStatusTransition(order, request.status(), items);
-        List<OrderItemResponse> itemResponses = items.stream().map(orderMapper::toResponse).toList();
+        List<OrderItemResponse> itemResponses = toItemResponses(items);
         return orderMapper.toDetailResponse(order, itemResponses);
     }
 
@@ -427,6 +425,26 @@ public class OrderServiceImpl implements OrderService {
             return new BusinessException(HttpStatus.FORBIDDEN, ORDER_FORBIDDEN_CODE, ORDER_FORBIDDEN_MESSAGE);
         }
         return new ResourceNotFoundException(ORDER_NOT_FOUND_CODE, ORDER_NOT_FOUND_MESSAGE);
+    }
+
+    /**
+     * Maps the given order lines to their responses, resolving each line's owning product id through
+     * the {@link ProductVariantService} purchase snapshot the order module already depends on
+     * (architecture-spec §7) — the same variant→product resolution the checkout pricing path uses, so
+     * no new bean-graph arrow appears. An order line stores only its {@code productVariantId}
+     * (database-spec §12); the owning product id it exposes (dto-spec §15) is derived here in the
+     * service and passed to the pure mapper, exactly as {@code itemCount} and {@code items} are. The
+     * referenced variant always exists (the {@code order_item → product_variant} RESTRICT foreign key),
+     * so the snapshot read never fails for a persisted line.
+     *
+     * @param items the order's lines
+     * @return the line responses, each carrying its owning product id, in the given order
+     */
+    private List<OrderItemResponse> toItemResponses(List<OrderItem> items) {
+        return items.stream()
+                .map(item -> orderMapper.toResponse(item,
+                        productVariantService.getPurchaseSnapshot(item.getProductVariantId()).productId()))
+                .toList();
     }
 
     /**

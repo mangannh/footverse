@@ -9,6 +9,8 @@ part of 'review_response.dart';
 ReviewResponse _$ReviewResponseFromJson(Map<String, dynamic> json) =>
     ReviewResponse(
       id: (json['id'] as num).toInt(),
+      productId: (json['productId'] as num).toInt(),
+      userId: (json['userId'] as num).toInt(),
       userFullName: json['userFullName'] as String,
       rating: (json['rating'] as num).toInt(),
       createdAt: DateTime.parse(json['createdAt'] as String),

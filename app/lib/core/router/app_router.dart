@@ -18,6 +18,11 @@ import '../../features/product/repositories/category_repository.dart';
 import '../../features/product/repositories/product_repository.dart';
 import '../../features/product/screens/product_detail_screen.dart';
 import '../../features/product/screens/product_list_screen.dart';
+import '../../features/profile/repositories/profile_repository.dart';
+import '../../features/profile/screens/change_email_screen.dart';
+import '../../features/profile/screens/change_password_screen.dart';
+import '../../features/profile/screens/profile_screen.dart';
+import '../../features/review/repositories/review_repository.dart';
 import '../../features/wishlist/screens/wishlist_screen.dart';
 import 'app_routes.dart';
 
@@ -40,12 +45,19 @@ const String _ordersPath = '/orders';
 // Relative to `_ordersPath`, so the order detail is a child of the order list and
 // back-navigation stacks naturally (mirrors the catalog → detail nesting).
 const String _orderDetailPath = ':id';
+const String _profilePath = '/profile';
+// Relative to `_profilePath`, so each credential screen is a child of the profile
+// screen and back-navigation stacks naturally (mirrors the address list → form
+// and order list → detail nesting).
+const String _changePasswordPath = 'password';
+const String _changeEmailPath = 'email';
 
 // The signed-in-only area. A location under any of these paths requires a token;
 // the redirect algorithm below is unchanged — only the guarded set grew from the
-// single `_accountPath` (sprint-6-plan item 07) to include the Sprint 7 routes
-// and, now, the Sprint 8 checkout / order routes. `_ordersPath` also guards its
-// nested order-detail child, since the guard matches any location under a path.
+// single `_accountPath` (sprint-6-plan item 07) to include the Sprint 7 routes,
+// the Sprint 8 checkout / order routes, and, now, the Sprint 9 `_profilePath`.
+// `_ordersPath` and `_profilePath` also guard their nested children, since the
+// guard matches any location under a path.
 const List<String> _authenticatedPaths = <String>[
   _accountPath,
   _addressesPath,
@@ -53,6 +65,7 @@ const List<String> _authenticatedPaths = <String>[
   _wishlistPath,
   _checkoutPath,
   _ordersPath,
+  _profilePath,
 ];
 
 /// Builds the `go_router` configuration (flutter-guidelines §Routing).
@@ -71,6 +84,8 @@ GoRouter createAppRouter(
   BrandRepository brandRepository,
   AddressRepository addressRepository,
   OrderRepository orderRepository,
+  ProfileRepository profileRepository,
+  ReviewRepository reviewRepository,
 ) {
   return GoRouter(
     initialLocation: _catalogPath,
@@ -92,6 +107,8 @@ GoRouter createAppRouter(
             builder: (context, state) => ProductDetailScreen(
               productId: int.parse(state.pathParameters['id']!),
               productRepository: productRepository,
+              reviewRepository: reviewRepository,
+              profileRepository: profileRepository,
             ),
           ),
         ],
@@ -157,6 +174,26 @@ GoRouter createAppRouter(
               orderId: int.parse(state.pathParameters['id']!),
               orderRepository: orderRepository,
             ),
+          ),
+        ],
+      ),
+      GoRoute(
+        path: _profilePath,
+        name: AppRoute.profile,
+        builder: (context, state) =>
+            ProfileScreen(profileRepository: profileRepository),
+        routes: <RouteBase>[
+          GoRoute(
+            path: _changePasswordPath,
+            name: AppRoute.changePassword,
+            builder: (context, state) =>
+                ChangePasswordScreen(profileRepository: profileRepository),
+          ),
+          GoRoute(
+            path: _changeEmailPath,
+            name: AppRoute.changeEmail,
+            builder: (context, state) =>
+                ChangeEmailScreen(profileRepository: profileRepository),
           ),
         ],
       ),

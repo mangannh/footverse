@@ -94,7 +94,7 @@ class OrderControllerTest {
     }
 
     private OrderDetailResponse detail() {
-        OrderItemResponse item = new OrderItemResponse(1L, 7L, "Air Force 1", "img.png", "Black", "42",
+        OrderItemResponse item = new OrderItemResponse(1L, 7L, 100L, "Air Force 1", "img.png", "Black", "42",
                 new BigDecimal("100.00"), 2, new BigDecimal("200.00"));
         return new OrderDetailResponse(9L, "FV-ORDER-9", OrderStatus.PENDING, PaymentMethod.COD,
                 PaymentStatus.UNPAID, new BigDecimal("200.00"), BigDecimal.ZERO, new BigDecimal("30000.00"),
@@ -156,6 +156,7 @@ class OrderControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.id").value(9))
                 .andExpect(jsonPath("$.data.orderCode").value("FV-ORDER-9"))
+                .andExpect(jsonPath("$.data.items[0].productId").value(100))
                 .andExpect(jsonPath("$.data.items[0].color").value("Black"))
                 .andExpect(jsonPath("$.data.items[0].size").value("42"))
                 .andExpect(jsonPath("$.data.items[0].unitPrice").value(100.00));
@@ -217,6 +218,7 @@ class OrderControllerTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.id").value(9))
                 .andExpect(jsonPath("$.data.orderCode").value("FV-ORDER-9"))
+                .andExpect(jsonPath("$.data.items[0].productId").value(100))
                 .andExpect(jsonPath("$.data.items[0].color").value("Black"));
     }
 

@@ -10,6 +10,7 @@ OrderItemResponse _$OrderItemResponseFromJson(Map<String, dynamic> json) =>
     OrderItemResponse(
       id: (json['id'] as num).toInt(),
       productVariantId: (json['productVariantId'] as num).toInt(),
+      productId: (json['productId'] as num).toInt(),
       productName: json['productName'] as String,
       color: json['color'] as String,
       size: json['size'] as String,

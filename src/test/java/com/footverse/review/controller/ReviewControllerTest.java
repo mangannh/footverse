@@ -84,7 +84,7 @@ class ReviewControllerTest {
     }
 
     private ReviewResponse reviewResponse() {
-        return new ReviewResponse(55L, "Reviewer", "http://avatar", 4, "Solid",
+        return new ReviewResponse(55L, 100L, 7L, "Reviewer", "http://avatar", 4, "Solid",
                 LocalDateTime.now(), LocalDateTime.now());
     }
 
@@ -102,6 +102,8 @@ class ReviewControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.content[0].id").value(55))
+                .andExpect(jsonPath("$.data.content[0].productId").value(100))
+                .andExpect(jsonPath("$.data.content[0].userId").value(7))
                 .andExpect(jsonPath("$.data.content[0].userFullName").value("Reviewer"))
                 .andExpect(jsonPath("$.data.content[0].rating").value(4));
     }
@@ -135,6 +137,8 @@ class ReviewControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.id").value(55))
+                .andExpect(jsonPath("$.data.productId").value(100))
+                .andExpect(jsonPath("$.data.userId").value(7))
                 .andExpect(jsonPath("$.data.rating").value(4));
     }
 

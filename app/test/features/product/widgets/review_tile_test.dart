@@ -8,6 +8,8 @@ ReviewResponse _review({
   required DateTime updatedAt,
 }) => ReviewResponse(
   id: 1,
+  productId: 10,
+  userId: 7,
   userFullName: 'Nguyen Van A',
   rating: 5,
   comment: 'Great shoe.',

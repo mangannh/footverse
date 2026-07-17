@@ -21,6 +21,7 @@ Map<String, dynamic> _previewJson() => <String, dynamic>{
 Map<String, dynamic> _itemJson() => <String, dynamic>{
   'id': 900,
   'productVariantId': 100,
+  'productId': 55,
   'productName': 'Air Zoom Pegasus',
   'productImageUrl': 'https://cdn.example.com/p1.jpg',
   'color': 'Black',
@@ -109,6 +110,7 @@ void main() {
 
       expect(item.id, 900);
       expect(item.productVariantId, 100);
+      expect(item.productId, 55);
       expect(item.productName, 'Air Zoom Pegasus');
       expect(item.productImageUrl, 'https://cdn.example.com/p1.jpg');
       expect(item.color, 'Black');

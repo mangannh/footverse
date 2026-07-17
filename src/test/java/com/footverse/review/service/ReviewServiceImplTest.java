@@ -98,7 +98,7 @@ class ReviewServiceImplTest {
     }
 
     private ReviewResponse response() {
-        return new ReviewResponse(REVIEW_ID, "Reviewer", "http://avatar", 4, "Solid",
+        return new ReviewResponse(REVIEW_ID, PRODUCT_ID, USER_ID, "Reviewer", "http://avatar", 4, "Solid",
                 LocalDateTime.now(), LocalDateTime.now());
     }
 

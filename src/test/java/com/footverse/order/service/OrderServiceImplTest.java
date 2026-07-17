@@ -534,12 +534,13 @@ class OrderServiceImplTest {
         init();
         when(currentUserProvider.getCurrentUser()).thenReturn(caller());
         Order order = order(9L);
-        OrderItem line = orderLine(order, 2);
+        OrderItem line = orderLineWithVariant(order, VARIANT_ID, 2);
         when(orderRepository.findByIdAndUserId(9L, USER_ID)).thenReturn(Optional.of(order));
         when(orderItemRepository.findByOrderId(9L)).thenReturn(List.of(line));
-        OrderItemResponse itemResponse = new OrderItemResponse(1L, 7L, "Air Force 1", "img.png", "Black",
-                "42", new BigDecimal("100.00"), 2, new BigDecimal("200.00"));
-        when(orderMapper.toResponse(line)).thenReturn(itemResponse);
+        withProductResolution();
+        OrderItemResponse itemResponse = new OrderItemResponse(1L, VARIANT_ID, PRODUCT_ID, "Air Force 1",
+                "img.png", "Black", "42", new BigDecimal("100.00"), 2, new BigDecimal("200.00"));
+        when(orderMapper.toResponse(line, PRODUCT_ID)).thenReturn(itemResponse);
         OrderDetailResponse detail = new OrderDetailResponse(9L, "FV-ORDER-9", OrderStatus.PENDING,
                 PaymentMethod.COD, PaymentStatus.UNPAID, new BigDecimal("200.00"), BigDecimal.ZERO,
                 new BigDecimal("30000.00"), new BigDecimal("30200.00"), null, "Jane", "0900000000", "HCM",
@@ -550,8 +551,9 @@ class OrderServiceImplTest {
 
         assertThat(result).isSameAs(detail);
         assertThat(result.items()).singleElement()
-                .satisfies(item -> assertThat(item.color()).isEqualTo("Black"));
-        verify(orderMapper).toResponse(line);
+                .satisfies(item -> assertThat(item.color()).isEqualTo("Black"))
+                .satisfies(item -> assertThat(item.productId()).isEqualTo(PRODUCT_ID));
+        verify(orderMapper).toResponse(line, PRODUCT_ID);
     }
 
     /**
@@ -597,9 +599,24 @@ class OrderServiceImplTest {
         return new AddressResponse(ADDRESS_ID, "Jane", "0900000000", "HCM", "D1", "W1", "1 Street", true);
     }
 
+    private static final Long PRODUCT_ID = 100L;
+
     private OrderItemResponse itemResponse() {
-        return new OrderItemResponse(1L, VARIANT_ID, "Air Force 1", "img.png", "Black", "42",
+        return new OrderItemResponse(1L, VARIANT_ID, PRODUCT_ID, "Air Force 1", "img.png", "Black", "42",
                 new BigDecimal("100.00"), 2, new BigDecimal("200.00"));
+    }
+
+    /**
+     * Stubs the variant→product resolution the detail assembly uses (item 01): each order line's
+     * variant resolves through {@link ProductVariantService} to {@link #PRODUCT_ID}, which the service
+     * passes to the mapper as the line response's {@code productId}. Mirrors the checkout pricing
+     * path's snapshot read — the order module's existing {@code ProductVariantService} dependency, no
+     * new arrow.
+     */
+    private void withProductResolution() {
+        when(productVariantService.getPurchaseSnapshot(VARIANT_ID)).thenReturn(
+                new ProductVariantPurchaseSnapshot(VARIANT_ID, PRODUCT_ID, "Air Force 1", "img.png", "Black",
+                        "42", new BigDecimal("100.00"), 50, true));
     }
 
     private OrderDetailResponse detailResponse() {
@@ -622,7 +639,7 @@ class OrderServiceImplTest {
     private void withSuccessfulPersistence() {
         when(orderRepository.saveAndFlush(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(orderItemRepository.saveAll(anyList())).thenAnswer(invocation -> invocation.getArgument(0));
-        when(orderMapper.toResponse(any(OrderItem.class))).thenReturn(itemResponse());
+        when(orderMapper.toResponse(any(OrderItem.class), any())).thenReturn(itemResponse());
         when(orderMapper.toDetailResponse(any(Order.class), anyList())).thenReturn(detailResponse());
     }
 
@@ -796,7 +813,7 @@ class OrderServiceImplTest {
                 .thenThrow(new DataIntegrityViolationException("duplicate order code"))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(orderItemRepository.saveAll(anyList())).thenAnswer(invocation -> invocation.getArgument(0));
-        when(orderMapper.toResponse(any(OrderItem.class))).thenReturn(itemResponse());
+        when(orderMapper.toResponse(any(OrderItem.class), any())).thenReturn(itemResponse());
         when(orderMapper.toDetailResponse(any(Order.class), anyList())).thenReturn(detailResponse());
 
         OrderDetailResponse result = service.placeOrder(placeRequest(null));
@@ -858,7 +875,8 @@ class OrderServiceImplTest {
         Order order = pendingOrderOwnedByCaller(9L, coupon);
         OrderItem line = orderLineWithVariant(order, VARIANT_ID, 3);
         when(orderItemRepository.findByOrderId(9L)).thenReturn(List.of(line));
-        when(orderMapper.toResponse(line)).thenReturn(itemResponse());
+        withProductResolution();
+        when(orderMapper.toResponse(eq(line), any())).thenReturn(itemResponse());
         when(orderMapper.toDetailResponse(eq(order), anyList())).thenReturn(detailResponse());
 
         service.cancelMyOrder(9L);
@@ -882,7 +900,8 @@ class OrderServiceImplTest {
         Order order = pendingOrderOwnedByCaller(9L, null);
         OrderItem line = orderLineWithVariant(order, VARIANT_ID, 2);
         when(orderItemRepository.findByOrderId(9L)).thenReturn(List.of(line));
-        when(orderMapper.toResponse(line)).thenReturn(itemResponse());
+        withProductResolution();
+        when(orderMapper.toResponse(eq(line), any())).thenReturn(itemResponse());
         when(orderMapper.toDetailResponse(eq(order), anyList())).thenReturn(detailResponse());
 
         service.cancelMyOrder(9L);
@@ -905,7 +924,8 @@ class OrderServiceImplTest {
         Order order = pendingOrderOwnedByCaller(9L, coupon);
         OrderItem line = orderLineWithVariant(order, VARIANT_ID, 1);
         when(orderItemRepository.findByOrderId(9L)).thenReturn(List.of(line));
-        when(orderMapper.toResponse(line)).thenReturn(itemResponse());
+        withProductResolution();
+        when(orderMapper.toResponse(eq(line), any())).thenReturn(itemResponse());
         when(orderMapper.toDetailResponse(eq(order), anyList())).thenReturn(detailResponse());
 
         service.cancelMyOrder(9L);
@@ -983,7 +1003,8 @@ class OrderServiceImplTest {
 
     private void withStatusResponseMapping(Order order, OrderItem line) {
         when(orderItemRepository.findByOrderId(order.getId())).thenReturn(List.of(line));
-        when(orderMapper.toResponse(line)).thenReturn(itemResponse());
+        withProductResolution();
+        when(orderMapper.toResponse(eq(line), any())).thenReturn(itemResponse());
         when(orderMapper.toDetailResponse(eq(order), anyList())).thenReturn(detailResponse());
     }
 
@@ -995,7 +1016,7 @@ class OrderServiceImplTest {
     void updateOrderStatusPendingToConfirmedAdvancesStatus() {
         init();
         Order order = adminOrder(9L, OrderStatus.PENDING);
-        withStatusResponseMapping(order, orderLine(order, 2));
+        withStatusResponseMapping(order, orderLineWithVariant(order, VARIANT_ID, 2));
 
         service.updateOrderStatus(9L, statusRequest(OrderStatus.CONFIRMED));
 
@@ -1012,7 +1033,7 @@ class OrderServiceImplTest {
     void updateOrderStatusConfirmedToShippingAdvancesStatus() {
         init();
         Order order = adminOrder(9L, OrderStatus.CONFIRMED);
-        withStatusResponseMapping(order, orderLine(order, 2));
+        withStatusResponseMapping(order, orderLineWithVariant(order, VARIANT_ID, 2));
 
         service.updateOrderStatus(9L, statusRequest(OrderStatus.SHIPPING));
 
@@ -1028,7 +1049,7 @@ class OrderServiceImplTest {
     void updateOrderStatusShippingToDeliveredMarksPaidAndDelivered() {
         init();
         Order order = adminOrder(9L, OrderStatus.SHIPPING);
-        withStatusResponseMapping(order, orderLine(order, 2));
+        withStatusResponseMapping(order, orderLineWithVariant(order, VARIANT_ID, 2));
 
         service.updateOrderStatus(9L, statusRequest(OrderStatus.DELIVERED));
 

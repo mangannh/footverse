@@ -15,6 +15,8 @@ import 'features/order/repositories/order_repository.dart';
 import 'features/product/repositories/brand_repository.dart';
 import 'features/product/repositories/category_repository.dart';
 import 'features/product/repositories/product_repository.dart';
+import 'features/profile/repositories/profile_repository.dart';
+import 'features/review/repositories/review_repository.dart';
 import 'features/wishlist/providers/wishlist_provider.dart';
 import 'features/wishlist/repositories/wishlist_repository.dart';
 
@@ -75,6 +77,8 @@ Future<void> main() async {
         BrandRepository(dio),
         AddressRepository(dio),
         OrderRepository(dio),
+        ProfileRepository(dio),
+        ReviewRepository(dio),
       ),
     ),
   );

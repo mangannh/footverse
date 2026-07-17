@@ -64,6 +64,8 @@ Map<String, dynamic> _detailJson() => <String, dynamic>{
 
 Map<String, dynamic> _reviewJson() => <String, dynamic>{
   'id': 200,
+  'productId': 42,
+  'userId': 7,
   'userFullName': 'Nguyen Van A',
   'userAvatarUrl': 'https://cdn.example.com/a.jpg',
   'rating': 5,
@@ -244,6 +246,8 @@ void main() {
       final review = ReviewResponse.fromJson(_reviewJson());
 
       expect(review.id, 200);
+      expect(review.productId, 42);
+      expect(review.userId, 7);
       expect(review.userFullName, 'Nguyen Van A');
       expect(review.userAvatarUrl, 'https://cdn.example.com/a.jpg');
       expect(review.rating, 5);

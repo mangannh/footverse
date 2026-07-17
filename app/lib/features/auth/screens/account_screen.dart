@@ -58,6 +58,12 @@ class _AccountScreenState extends State<AccountScreen> {
               trailing: const Icon(Icons.chevron_right),
               onTap: () => context.pushNamed(AppRoute.orders),
             ),
+            ListTile(
+              leading: const Icon(Icons.person_outline),
+              title: const Text('Profile'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.pushNamed(AppRoute.profile),
+            ),
             const Divider(),
             const SizedBox(height: 16),
             FilledButton(

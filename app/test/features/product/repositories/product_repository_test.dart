@@ -38,6 +38,8 @@ Map<String, dynamic> _detailJson() => <String, dynamic>{
 
 Map<String, dynamic> _reviewJson() => <String, dynamic>{
   'id': 200,
+  'productId': 42,
+  'userId': 7,
   'userFullName': 'Nguyen Van A',
   'userAvatarUrl': null,
   'rating': 5,

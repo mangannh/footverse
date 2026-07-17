@@ -7,46 +7,70 @@ import '../models/order_item_response.dart';
 /// server-computed `lineTotal`. It renders only — every money value is displayed
 /// exactly as the server delivered it and the client computes nothing
 /// (dto-spec §1).
+///
+/// When [onReview] is provided (a delivered order line, sprint-9-plan item 05) it
+/// also shows a "Review this product" entry that navigates to the product detail;
+/// eligibility stays server-authoritative — this is only the eligibility-clear
+/// entry point from a delivered line.
 class OrderItemTile extends StatelessWidget {
-  const OrderItemTile({super.key, required this.item});
+  const OrderItemTile({super.key, required this.item, this.onReview});
 
   final OrderItemResponse item;
+
+  /// Invoked to open the product detail for reviewing; null on non-delivered
+  /// lines, where no review entry is shown.
+  final VoidCallback? onReview;
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final onReview = this.onReview;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          _Thumbnail(imageUrl: item.productImageUrl),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  item.productName,
-                  style: textTheme.titleSmall,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              _Thumbnail(imageUrl: item.productImageUrl),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      item.productName,
+                      style: textTheme.titleSmall,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${item.color} · ${item.size}',
+                      style: textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${item.unitPrice} × ${item.quantity}',
+                      style: textTheme.bodyMedium,
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${item.color} · ${item.size}',
-                  style: textTheme.bodySmall,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${item.unitPrice} × ${item.quantity}',
-                  style: textTheme.bodyMedium,
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 8),
+              Text('${item.lineTotal}', style: textTheme.titleSmall),
+            ],
           ),
-          const SizedBox(width: 8),
-          Text('${item.lineTotal}', style: textTheme.titleSmall),
+          if (onReview != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: onReview,
+                icon: const Icon(Icons.rate_review_outlined, size: 18),
+                label: const Text('Review this product'),
+              ),
+            ),
         ],
       ),
     );

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/error/app_exception.dart';
+import '../../../core/router/app_routes.dart';
 import '../models/order_detail_response.dart';
 import '../models/order_item_response.dart';
 import '../models/order_status.dart';
@@ -115,7 +117,10 @@ class _OrderDetailView extends StatelessWidget {
               const SizedBox(height: 16),
               _ShippingSection(order: order),
               const SizedBox(height: 16),
-              _ItemsSection(items: order.items),
+              _ItemsSection(
+                items: order.items,
+                delivered: order.status == OrderStatus.delivered,
+              ),
               const SizedBox(height: 16),
               _MoneySummary(order: order),
               if (order.note != null && order.note!.isNotEmpty) ...<Widget>[
@@ -273,11 +278,15 @@ class _ShippingSection extends StatelessWidget {
   }
 }
 
-/// The order's item lines (one [OrderItemTile] per line).
+/// The order's item lines (one [OrderItemTile] per line). On a [delivered] order
+/// each line offers a "Review this product" entry that navigates to the product
+/// detail by the line's `productId` (sprint-9-plan item 05); eligibility stays
+/// server-authoritative.
 class _ItemsSection extends StatelessWidget {
-  const _ItemsSection({required this.items});
+  const _ItemsSection({required this.items, required this.delivered});
 
   final List<OrderItemResponse> items;
+  final bool delivered;
 
   @override
   Widget build(BuildContext context) {
@@ -287,7 +296,16 @@ class _ItemsSection extends StatelessWidget {
       children: <Widget>[
         Text('Items (${items.length})', style: textTheme.titleMedium),
         const SizedBox(height: 4),
-        for (final item in items) OrderItemTile(item: item),
+        for (final item in items)
+          OrderItemTile(
+            item: item,
+            onReview: delivered
+                ? () => context.pushNamed(
+                    AppRoute.productDetail,
+                    pathParameters: <String, String>{'id': '${item.productId}'},
+                  )
+                : null,
+          ),
       ],
     );
   }

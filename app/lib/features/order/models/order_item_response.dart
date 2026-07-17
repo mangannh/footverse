@@ -8,12 +8,15 @@ part 'order_item_response.g.dart';
 ///
 /// The snapshot fields are frozen at checkout and returned exactly as persisted;
 /// [unitPrice] and [lineTotal] are server-computed money the client only renders
-/// (dto-spec §1; business-rules → Order Item).
+/// (dto-spec §1; business-rules → Order Item). [productId] is the current product
+/// the line's variant belongs to (not a snapshot); it lets the client navigate
+/// from a delivered order line to the product detail to review it.
 @JsonSerializable(createToJson: false)
 class OrderItemResponse {
   const OrderItemResponse({
     required this.id,
     required this.productVariantId,
+    required this.productId,
     required this.productName,
     required this.color,
     required this.size,
@@ -28,6 +31,9 @@ class OrderItemResponse {
 
   final int id;
   final int productVariantId;
+
+  /// The id of the product the variant belongs to.
+  final int productId;
   final String productName;
   final String? productImageUrl;
   final String color;

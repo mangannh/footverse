@@ -24,6 +24,7 @@ Map<String, dynamic> _previewData() => <String, dynamic>{
 Map<String, dynamic> _orderItemData() => <String, dynamic>{
   'id': 900,
   'productVariantId': 100,
+  'productId': 55,
   'productName': 'Air Zoom Pegasus',
   'productImageUrl': 'https://cdn.example.com/p1.jpg',
   'color': 'Black',

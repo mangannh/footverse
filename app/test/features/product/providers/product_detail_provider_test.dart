@@ -39,6 +39,8 @@ ProductDetailResponse _detail({List<ProductImageResponse>? images}) =>
 
 ReviewResponse _review(int id) => ReviewResponse(
   id: id,
+  productId: 1,
+  userId: id,
   userFullName: 'User $id',
   rating: 5,
   createdAt: DateTime.parse('2025-01-15T10:30:00'),

@@ -19,4 +19,7 @@ class AppRoute {
   static const String checkout = 'checkout';
   static const String orders = 'orders';
   static const String orderDetail = 'orderDetail';
+  static const String profile = 'profile';
+  static const String changePassword = 'changePassword';
+  static const String changeEmail = 'changeEmail';
 }
