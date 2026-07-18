@@ -21,6 +21,9 @@ import com.footverse.category.service.CategoryService;
 import com.footverse.common.dto.PageResponse;
 import com.footverse.common.exception.BusinessException;
 import com.footverse.common.exception.ResourceNotFoundException;
+import com.footverse.product.dto.AdminProductDetailResponse;
+import com.footverse.product.dto.AdminProductSummaryResponse;
+import com.footverse.product.dto.AdminProductVariantResponse;
 import com.footverse.product.dto.CreateProductImageRequest;
 import com.footverse.product.dto.CreateProductRequest;
 import com.footverse.product.dto.ProductDetailResponse;
@@ -121,6 +124,25 @@ public class ProductServiceImpl implements ProductService {
         Product product = productRepository.findByIdAndDeletedAtIsNull(id)
                 .orElseThrow(() -> new ResourceNotFoundException("PRODUCT_NOT_FOUND", "Product not found"));
         return assembleDetail(product);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<AdminProductSummaryResponse> getAdminProducts(Pageable pageable) {
+        PageResponse<ProductSummaryResponse> page = searchProducts(null, null, null, pageable);
+        List<AdminProductSummaryResponse> content = page.content().stream()
+                .map(this::toAdminSummary)
+                .toList();
+        return new PageResponse<>(content, page.page(), page.size(), page.totalElements(),
+                page.totalPages(), page.last());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public AdminProductDetailResponse getAdminProductDetail(Long id) {
+        Product product = productRepository.findByIdAndDeletedAtIsNull(id)
+                .orElseThrow(() -> new ResourceNotFoundException("PRODUCT_NOT_FOUND", "Product not found"));
+        return assembleAdminDetail(product);
     }
 
     @Override
@@ -269,6 +291,61 @@ public class ProductServiceImpl implements ProductService {
                 rating.reviewCount(),
                 available,
                 product.getCreatedAt());
+    }
+
+    /**
+     * Assembles the full ADMIN product detail: identical to {@link #assembleDetail(Product)} except
+     * the variants carry the ADMIN-only {@code costPrice} (from
+     * {@link ProductVariantService#getAdminVariantsByProduct(Long)}) and the response type is
+     * {@link AdminProductDetailResponse}. The images reuse the non-sensitive
+     * {@link ProductImageResponse}.
+     *
+     * @param product the source product
+     * @return the assembled ADMIN detail response
+     */
+    private AdminProductDetailResponse assembleAdminDetail(Product product) {
+        Long id = product.getId();
+        List<ProductImageResponse> images = productImageRepository.findByProductIdOrderByDisplayOrderAsc(id).stream()
+                .map(productImageMapper::toResponse)
+                .toList();
+        List<AdminProductVariantResponse> variants = productVariantService.getAdminVariantsByProduct(id);
+        boolean available = productVariantService.hasPurchasableVariant(id);
+        RatingSummary rating = reviewService.getRatingSummary(id);
+        return new AdminProductDetailResponse(
+                product.getId(),
+                product.getName(),
+                product.getDescription(),
+                product.getBasePrice(),
+                product.getBrand().getId(),
+                product.getBrand().getName(),
+                product.getCategory().getId(),
+                product.getCategory().getName(),
+                images,
+                variants,
+                rating.averageRating(),
+                rating.reviewCount(),
+                available,
+                product.getCreatedAt());
+    }
+
+    /**
+     * Converts an already-assembled public {@link ProductSummaryResponse} to its ADMIN counterpart.
+     * The ADMIN summary carries the same fields (no per-variant cost at list level), so the ADMIN
+     * list reuses the public search assembly rather than duplicating the query and mapping.
+     *
+     * @param summary the assembled public summary
+     * @return the ADMIN summary
+     */
+    private AdminProductSummaryResponse toAdminSummary(ProductSummaryResponse summary) {
+        return new AdminProductSummaryResponse(
+                summary.id(),
+                summary.name(),
+                summary.basePrice(),
+                summary.brandName(),
+                summary.categoryName(),
+                summary.primaryImageUrl(),
+                summary.averageRating(),
+                summary.available());
     }
 
     /**

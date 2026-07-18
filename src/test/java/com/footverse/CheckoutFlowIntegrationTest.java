@@ -165,9 +165,9 @@ class CheckoutFlowIntegrationTest {
                 "{\"name\":\"FV Checkout Runner\",\"description\":\"flow product\",\"basePrice\":200000.00,"
                         + "\"categoryId\":" + categoryId + ",\"brandId\":" + brandId + "}");
         long variantA = create("/api/v1/products/" + productId + "/variants", adminToken(),
-                "{\"color\":\"Black\",\"size\":\"42\",\"stockQuantity\":10,\"sku\":\"FV-CO-A\",\"status\":\"ACTIVE\"}");
+                "{\"color\":\"Black\",\"size\":\"42\",\"stockQuantity\":10,\"sku\":\"FV-CO-A\",\"status\":\"ACTIVE\",\"costPrice\":80.00}");
         long variantB = create("/api/v1/products/" + productId + "/variants", adminToken(),
-                "{\"color\":\"White\",\"size\":\"43\",\"stockQuantity\":10,\"sku\":\"FV-CO-B\",\"status\":\"ACTIVE\"}");
+                "{\"color\":\"White\",\"size\":\"43\",\"stockQuantity\":10,\"sku\":\"FV-CO-B\",\"status\":\"ACTIVE\",\"costPrice\":80.00}");
         create("/api/v1/products/" + productId + "/images", adminToken(),
                 "{\"imageUrl\":\"http://img/checkout-primary.png\",\"displayOrder\":0,\"isPrimary\":true}");
 

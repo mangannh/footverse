@@ -6,6 +6,8 @@ import java.util.Map;
 import org.springframework.data.domain.Pageable;
 
 import com.footverse.common.dto.PageResponse;
+import com.footverse.product.dto.AdminProductDetailResponse;
+import com.footverse.product.dto.AdminProductSummaryResponse;
 import com.footverse.product.dto.CreateProductImageRequest;
 import com.footverse.product.dto.CreateProductRequest;
 import com.footverse.product.dto.ProductDetailResponse;
@@ -64,6 +66,27 @@ public interface ProductService {
      * @return the assembled product detail
      */
     ProductDetailResponse getProductDetail(Long id);
+
+    /**
+     * Returns a page of products for ADMIN management (all non-deleted products, paginated and
+     * sorted), each as an {@link AdminProductSummaryResponse} (Sprint 11). ADMIN-only read surface;
+     * summaries carry no per-variant {@code costPrice} (cost is variant-level, exposed only on the
+     * ADMIN detail). The sort is restricted to the same whitelist as the public search.
+     *
+     * @param pageable the pagination and (whitelisted) sort request
+     * @return the page of ADMIN product summaries
+     */
+    PageResponse<AdminProductSummaryResponse> getAdminProducts(Pageable pageable);
+
+    /**
+     * Returns the full ADMIN detail of a non-deleted product, mirroring {@link #getProductDetail}
+     * but with its variants carrying the ADMIN-only {@code costPrice} (Sprint 11). ADMIN-only read
+     * surface.
+     *
+     * @param id the product id
+     * @return the assembled ADMIN product detail
+     */
+    AdminProductDetailResponse getAdminProductDetail(Long id);
 
     /**
      * Creates a product. The {@code categoryId} and {@code brandId} must reference existing

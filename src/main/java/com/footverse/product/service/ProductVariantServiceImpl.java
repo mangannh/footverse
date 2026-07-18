@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.footverse.common.exception.BusinessException;
 import com.footverse.common.exception.DuplicateResourceException;
 import com.footverse.common.exception.ResourceNotFoundException;
+import com.footverse.product.dto.AdminProductVariantResponse;
 import com.footverse.product.dto.CreateProductVariantRequest;
 import com.footverse.product.dto.ProductVariantPurchaseSnapshot;
 import com.footverse.product.dto.ProductVariantResponse;
@@ -49,6 +50,14 @@ public class ProductVariantServiceImpl implements ProductVariantService {
     public List<ProductVariantResponse> getVariantsByProduct(Long productId) {
         return productVariantRepository.findByProductId(productId).stream()
                 .map(productVariantMapper::toResponse)
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<AdminProductVariantResponse> getAdminVariantsByProduct(Long productId) {
+        return productVariantRepository.findByProductId(productId).stream()
+                .map(productVariantMapper::toAdminResponse)
                 .toList();
     }
 
@@ -108,6 +117,7 @@ public class ProductVariantServiceImpl implements ProductVariantService {
         variant.setSku(request.sku());
         variant.setPriceOverride(request.priceOverride());
         variant.setStatus(request.status());
+        variant.setCostPrice(request.costPrice());
         return productVariantMapper.toResponse(productVariantRepository.save(variant));
     }
 
@@ -137,6 +147,7 @@ public class ProductVariantServiceImpl implements ProductVariantService {
         variant.setSku(request.sku());
         variant.setPriceOverride(request.priceOverride());
         variant.setStatus(request.status());
+        variant.setCostPrice(request.costPrice());
         return productVariantMapper.toResponse(productVariantRepository.save(variant));
     }
 

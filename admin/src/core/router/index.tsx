@@ -9,6 +9,12 @@ import { BrandRepository } from '@/features/brand/repositories/brand-repository'
 import { CategoryFormPage } from '@/features/category/pages/category-form-page';
 import { CategoryListPage } from '@/features/category/pages/category-list-page';
 import { CategoryRepository } from '@/features/category/repositories/category-repository';
+import { CouponFormPage } from '@/features/coupon/pages/coupon-form-page';
+import { CouponListPage } from '@/features/coupon/pages/coupon-list-page';
+import { CouponRepository } from '@/features/coupon/repositories/coupon-repository';
+import { ProductFormPage } from '@/features/product/pages/product-form-page';
+import { ProductListPage } from '@/features/product/pages/product-list-page';
+import { ProductRepository } from '@/features/product/repositories/product-repository';
 
 import { AdminGuard } from './admin-guard';
 import { LoginRoute } from './login-route';
@@ -19,6 +25,8 @@ import { ROUTES } from './routes';
 // Flutter's `app_router.dart` receiving `XxxRepository(dio)` from `main.dart`.
 const brandRepository = new BrandRepository(httpClient);
 const categoryRepository = new CategoryRepository(httpClient);
+const productRepository = new ProductRepository(httpClient);
+const couponRepository = new CouponRepository(httpClient);
 
 /**
  * The single React Router configuration (react-guidelines §Routing) — the analog
@@ -56,6 +64,29 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <CategoryListPage repository={categoryRepository} /> },
           { path: 'form', element: <CategoryFormPage repository={categoryRepository} /> },
+        ],
+      },
+      {
+        path: ROUTES.products,
+        children: [
+          { index: true, element: <ProductListPage repository={productRepository} /> },
+          {
+            path: 'form',
+            element: (
+              <ProductFormPage
+                productRepository={productRepository}
+                categoryRepository={categoryRepository}
+                brandRepository={brandRepository}
+              />
+            ),
+          },
+        ],
+      },
+      {
+        path: ROUTES.coupons,
+        children: [
+          { index: true, element: <CouponListPage repository={couponRepository} /> },
+          { path: 'form', element: <CouponFormPage repository={couponRepository} /> },
         ],
       },
     ],

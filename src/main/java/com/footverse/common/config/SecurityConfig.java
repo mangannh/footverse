@@ -78,6 +78,10 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/products/*/images").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/v1/products/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/products/**").hasRole("ADMIN")
+                        // Admin product read surface (security-spec §6, Sprint 11): the /admin/products
+                        // reads carry the ADMIN-only costPrice, so they are ADMIN-gated. The path is
+                        // distinct from the public GET /api/v1/products/** permitAll rule above.
+                        .requestMatchers(HttpMethod.GET, "/api/v1/admin/products/**").hasRole("ADMIN")
                         // Customer-owned shopping resources (security-spec §6). Every HTTP method is
                         // CUSTOMER-only — deliberately excluding ADMIN, unlike the CUSTOMER+ADMIN
                         // /users/me rows. Ownership (a caller acts only on their own rows) is enforced

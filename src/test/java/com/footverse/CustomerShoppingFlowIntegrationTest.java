@@ -135,7 +135,7 @@ class CustomerShoppingFlowIntegrationTest {
                 "{\"name\":\"FV Shopping Runner\",\"description\":\"flow product\",\"basePrice\":150.00,"
                         + "\"categoryId\":" + categoryId + ",\"brandId\":" + brandId + "}");
         long variantId = create("/api/v1/products/" + productId + "/variants", adminToken(),
-                "{\"color\":\"Black\",\"size\":\"42\",\"stockQuantity\":5,\"sku\":\"FV-SHOP-42\",\"status\":\"ACTIVE\"}");
+                "{\"color\":\"Black\",\"size\":\"42\",\"stockQuantity\":5,\"sku\":\"FV-SHOP-42\",\"status\":\"ACTIVE\",\"costPrice\":80.00}");
         create("/api/v1/products/" + productId + "/images", adminToken(),
                 "{\"imageUrl\":\"http://img/shop-primary.png\",\"displayOrder\":0,\"isPrimary\":true}");
 

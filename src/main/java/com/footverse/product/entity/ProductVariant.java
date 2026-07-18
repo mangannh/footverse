@@ -29,6 +29,9 @@ import lombok.Setter;
  * each {@code (product, color, size)} triple is unique — one product carries all of its colorways,
  * so the same size may repeat across colors and the same color across sizes. The effective selling
  * price is {@link #priceOverride} when set, otherwise the owning product's {@code basePrice}.</p>
+ *
+ * <p>{@link #costPrice} is the ADMIN-only unit cost basis (business-rules → Product Variant): it is
+ * exposed only through the ADMIN product read surface and never on the public catalog.</p>
  */
 @Getter
 @Setter
@@ -65,4 +68,7 @@ public class ProductVariant extends BaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private ProductVariantStatus status;
+
+    @Column(name = "cost_price", nullable = false, precision = 12, scale = 2)
+    private BigDecimal costPrice;
 }

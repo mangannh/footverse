@@ -263,7 +263,7 @@ class ProductControllerTest {
         mockMvc.perform(post("/api/v1/products/1/variants")
                         .header(HttpHeaders.AUTHORIZATION, adminToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"color\":\"Black\",\"size\":\"42\",\"stockQuantity\":5,\"sku\":\"SKU-42\",\"status\":\"ACTIVE\"}"))
+                        .content("{\"color\":\"Black\",\"size\":\"42\",\"stockQuantity\":5,\"sku\":\"SKU-42\",\"status\":\"ACTIVE\",\"costPrice\":80.00}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.id").value(2))
                 .andExpect(jsonPath("$.data.sku").value("SKU-42"));
@@ -284,7 +284,7 @@ class ProductControllerTest {
         mockMvc.perform(put("/api/v1/products/1/variants/2")
                         .header(HttpHeaders.AUTHORIZATION, adminToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"color\":\"Black\",\"size\":\"43\",\"stockQuantity\":9,\"sku\":\"SKU-43\",\"status\":\"ACTIVE\"}"))
+                        .content("{\"color\":\"Black\",\"size\":\"43\",\"stockQuantity\":9,\"sku\":\"SKU-43\",\"status\":\"ACTIVE\",\"costPrice\":80.00}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.size").value("43"));
     }

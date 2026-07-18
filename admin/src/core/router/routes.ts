@@ -14,4 +14,8 @@ export const ROUTES = {
   brandForm: '/brands/form',
   categories: '/categories',
   categoryForm: '/categories/form',
+  products: '/products',
+  productForm: '/products/form',
+  coupons: '/coupons',
+  couponForm: '/coupons/form',
 } as const;

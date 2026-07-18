@@ -8,6 +8,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
 /**
@@ -20,6 +21,7 @@ import jakarta.validation.constraints.Size;
  * @param sku           the stock-keeping unit; required; unique
  * @param priceOverride the optional price override; when null the product's base price applies
  * @param status        the variant status; required
+ * @param costPrice     the ADMIN-only unit cost basis; required; zero or positive
  */
 public record UpdateProductVariantRequest(
         @NotBlank @Size(max = 50) String color,
@@ -27,5 +29,6 @@ public record UpdateProductVariantRequest(
         @NotNull @Min(0) Integer stockQuantity,
         @NotBlank String sku,
         @Positive BigDecimal priceOverride,
-        @NotNull ProductVariantStatus status) {
+        @NotNull ProductVariantStatus status,
+        @NotNull @PositiveOrZero BigDecimal costPrice) {
 }

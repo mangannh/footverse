@@ -4,6 +4,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
+import com.footverse.product.dto.AdminProductVariantResponse;
 import com.footverse.product.dto.CreateProductVariantRequest;
 import com.footverse.product.dto.ProductVariantPurchaseSnapshot;
 import com.footverse.product.dto.ProductVariantResponse;
@@ -26,6 +27,16 @@ public interface ProductVariantService {
      * @return the variant responses (empty when the product has none or does not exist)
      */
     List<ProductVariantResponse> getVariantsByProduct(Long productId);
+
+    /**
+     * Returns the variants of a product as ADMIN responses, each carrying the ADMIN-only
+     * {@code costPrice} alongside its effective price (Sprint 11). Used only by the ADMIN product
+     * read surface; the effective price is resolved by the mapper, never recomputed here.
+     *
+     * @param productId the owning product id
+     * @return the ADMIN variant responses (empty when the product has none or does not exist)
+     */
+    List<AdminProductVariantResponse> getAdminVariantsByProduct(Long productId);
 
     /**
      * Reports whether a product has at least one purchasable variant — a variant that is

@@ -36,6 +36,9 @@ import com.footverse.category.service.CategoryService;
 import com.footverse.common.dto.PageResponse;
 import com.footverse.common.exception.BusinessException;
 import com.footverse.common.exception.ResourceNotFoundException;
+import com.footverse.product.dto.AdminProductDetailResponse;
+import com.footverse.product.dto.AdminProductSummaryResponse;
+import com.footverse.product.dto.AdminProductVariantResponse;
 import com.footverse.product.dto.CreateProductImageRequest;
 import com.footverse.product.dto.CreateProductRequest;
 import com.footverse.product.dto.ProductDetailResponse;
@@ -228,6 +231,82 @@ class ProductServiceImplTest {
                 .hasFieldOrPropertyWithValue("errorCode", "PRODUCT_SORT_INVALID")
                 .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.BAD_REQUEST);
         verify(productRepository, never()).search(any(), any(), any(), any());
+    }
+
+    // ----- Admin read (costPrice surface) -----
+
+    /**
+     * The admin list reuses the public search assembly and maps each product to an
+     * {@link AdminProductSummaryResponse}, preserving the page metadata. The summary carries no cost.
+     */
+    @Test
+    void getAdminProductsMapsToAdminSummariesPreservingMetadata() {
+        init();
+        Product product = product(1L);
+        Pageable pageable = PageRequest.of(0, 20);
+        ProductImage primary = image(9L, "primary.png", 0, true);
+        primary.setProduct(product);
+        when(productRepository.search(null, null, null, pageable))
+                .thenReturn(new PageImpl<>(List.of(product), pageable, 1));
+        when(productImageRepository.findPrimaryByProductIdIn(List.of(1L))).thenReturn(List.of(primary));
+        when(productVariantService.getPurchasableStateByProductIds(List.of(1L))).thenReturn(Map.of(1L, true));
+        when(reviewService.getRatingSummaries(List.of(1L))).thenReturn(Map.of());
+
+        PageResponse<AdminProductSummaryResponse> result = service.getAdminProducts(pageable);
+
+        assertThat(result.totalElements()).isEqualTo(1);
+        assertThat(result.page()).isZero();
+        assertThat(result.size()).isEqualTo(20);
+        assertThat(result.last()).isTrue();
+        assertThat(result.content()).hasSize(1);
+        AdminProductSummaryResponse summary = result.content().get(0);
+        assertThat(summary.id()).isEqualTo(1L);
+        assertThat(summary.name()).isEqualTo("Air Force 1");
+        assertThat(summary.basePrice()).isEqualByComparingTo("100.00");
+        assertThat(summary.brandName()).isEqualTo("Nike");
+        assertThat(summary.categoryName()).isEqualTo("Sneakers");
+        assertThat(summary.primaryImageUrl()).isEqualTo("primary.png");
+        assertThat(summary.available()).isTrue();
+    }
+
+    /**
+     * The admin detail assembles the product with its cost-carrying variants (from
+     * {@link ProductVariantService#getAdminVariantsByProduct(Long)}) and reused image DTOs.
+     */
+    @Test
+    void getAdminProductDetailAssemblesCostCarryingVariants() {
+        init();
+        Product product = product(1L);
+        AdminProductVariantResponse variant = new AdminProductVariantResponse(10L, "Black", "42",
+                new BigDecimal("100.00"), null, new BigDecimal("80.00"), 5, ProductVariantStatus.ACTIVE, "SKU-42");
+        when(productRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(product));
+        when(productImageRepository.findByProductIdOrderByDisplayOrderAsc(1L)).thenReturn(List.of());
+        when(productVariantService.getAdminVariantsByProduct(1L)).thenReturn(List.of(variant));
+        when(productVariantService.hasPurchasableVariant(1L)).thenReturn(true);
+        when(reviewService.getRatingSummary(1L)).thenReturn(RatingSummary.empty());
+
+        AdminProductDetailResponse result = service.getAdminProductDetail(1L);
+
+        assertThat(result.id()).isEqualTo(1L);
+        assertThat(result.name()).isEqualTo("Air Force 1");
+        assertThat(result.variants()).containsExactly(variant);
+        assertThat(result.variants().get(0).costPrice()).isEqualByComparingTo("80.00");
+        assertThat(result.available()).isTrue();
+    }
+
+    /**
+     * The admin detail of a missing (or soft-deleted) product reuses {@code 404 PRODUCT_NOT_FOUND};
+     * no new error code is introduced.
+     */
+    @Test
+    void getAdminProductDetailOfMissingProductThrowsNotFound() {
+        init();
+        when(productRepository.findByIdAndDeletedAtIsNull(9L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getAdminProductDetail(9L))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "PRODUCT_NOT_FOUND")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.NOT_FOUND);
     }
 
     // ----- Summary by ids -----

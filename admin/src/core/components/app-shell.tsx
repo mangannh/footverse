@@ -22,6 +22,8 @@ const DRAWER_WIDTH = 240;
 const SECTIONS = [
   { label: 'Brands', path: ROUTES.brands },
   { label: 'Categories', path: ROUTES.categories },
+  { label: 'Products', path: ROUTES.products },
+  { label: 'Coupons', path: ROUTES.coupons },
 ] as const;
 
 /**
@@ -29,7 +31,7 @@ const SECTIONS = [
  * `ShellRoute` shell (react-guidelines §Component Rules; sprint-10-plan Task 03).
  *
  * It hosts the top `AppBar` (title + sign-out) and a permanent `Drawer` with the
- * Brands / Categories navigation, and renders the active section in the content
+ * Brands / Categories / Products / Coupons navigation, and renders the active section in the content
  * area via the router `Outlet`. Sign-out clears the session; the guard then
  * redirects to login off the session-state change (mirroring the Flutter
  * state-driven redirect). Features plug their pages into the outlet, never the

@@ -1,5 +1,6 @@
 package com.footverse.product;
 
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -95,7 +96,7 @@ class CatalogFlowIntegrationTest {
         mockMvc.perform(post("/api/v1/products/" + productId + "/variants")
                         .header(HttpHeaders.AUTHORIZATION, adminToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"color\":\"Black\",\"size\":\"42\",\"stockQuantity\":5,\"sku\":\"FV-INT-42\",\"status\":\"ACTIVE\"}"))
+                        .content("{\"color\":\"Black\",\"size\":\"42\",\"stockQuantity\":5,\"sku\":\"FV-INT-42\",\"status\":\"ACTIVE\",\"costPrice\":80.00}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.price").value(150.00));
 
@@ -107,8 +108,10 @@ class CatalogFlowIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.isPrimary").value(true));
 
-        // 6a. Public list: the product appears, purchasable, with its primary image.
-        mockMvc.perform(get("/api/v1/products"))
+        // 6a. Public list: the product appears, purchasable, with its primary image. Filtered by
+        // its own name so the assertion is deterministic regardless of any other product already
+        // in the database (the endpoint has no test-scoping and lists the whole catalog).
+        mockMvc.perform(get("/api/v1/products").param("name", PRODUCT_NAME))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.content[0].name").value(PRODUCT_NAME))
                 .andExpect(jsonPath("$.data.content[0].available").value(true))
@@ -145,6 +148,91 @@ class CatalogFlowIntegrationTest {
     }
 
     /**
+     * The ADMIN-only {@code costPrice} round-trips through the ADMIN read surface
+     * ({@code GET /admin/products(/{id})}) but is <strong>never</strong> present on the public
+     * catalog read ({@code GET /products/{id}}); a null or negative {@code costPrice} on a variant
+     * write is rejected {@code 400 VALIDATION_ERROR} (Sprint 11).
+     */
+    @Test
+    void costPriceRoundTripsForAdminAndIsAbsentFromPublicRead() throws Exception {
+        long categoryId = adminCreate("/api/v1/categories", "{\"name\":\"Cost Category\",\"description\":\"x\"}");
+        long brandId = adminCreate("/api/v1/brands", "{\"name\":\"Cost Brand\"}");
+        long productId = adminCreate("/api/v1/products",
+                "{\"name\":\"Cost Runner\",\"basePrice\":150.00,"
+                        + "\"categoryId\":" + categoryId + ",\"brandId\":" + brandId + "}");
+
+        // ADMIN creates a variant carrying costPrice.
+        mockMvc.perform(post("/api/v1/products/" + productId + "/variants")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"color\":\"Black\",\"size\":\"42\",\"stockQuantity\":5,\"sku\":\"COST-42\","
+                                + "\"status\":\"ACTIVE\",\"costPrice\":80.00}"))
+                .andExpect(status().isCreated());
+
+        // ADMIN detail exposes costPrice on the variant, its effective price falling back to the
+        // product's basePrice, and its raw priceOverride is null (the variant follows basePrice) —
+        // the ADMIN client reads the raw override rather than inferring it from a price comparison.
+        mockMvc.perform(get("/api/v1/admin/products/" + productId).header(HttpHeaders.AUTHORIZATION, adminToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.variants[0].sku").value("COST-42"))
+                .andExpect(jsonPath("$.data.variants[0].price").value(150.00))
+                .andExpect(jsonPath("$.data.variants[0].priceOverride").value(nullValue()))
+                .andExpect(jsonPath("$.data.variants[0].costPrice").value(80.00));
+
+        // ADMIN list includes the product. The admin list endpoint has no filter param (dto-spec
+        // §20), so the assertion locates this test's own product by id within the page rather than
+        // asserting a global totalElements/content[0] — which would be fragile against any other
+        // product already in the database.
+        mockMvc.perform(get("/api/v1/admin/products").header(HttpHeaders.AUTHORIZATION, adminToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content[?(@.name == 'Cost Runner')]").isNotEmpty());
+
+        // A variant with an explicit priceOverride returns the RAW override on the ADMIN read
+        // (not merely the effective price), so the ADMIN client can prefill the override field on
+        // edit; the public read still omits both costPrice and priceOverride.
+        long overrideProductId = adminCreate("/api/v1/products",
+                "{\"name\":\"Override Runner\",\"basePrice\":150.00,"
+                        + "\"categoryId\":" + categoryId + ",\"brandId\":" + brandId + "}");
+        mockMvc.perform(post("/api/v1/products/" + overrideProductId + "/variants")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"color\":\"Blue\",\"size\":\"42\",\"stockQuantity\":5,\"sku\":\"COST-OV\","
+                                + "\"status\":\"ACTIVE\",\"priceOverride\":120.00,\"costPrice\":80.00}"))
+                .andExpect(status().isCreated());
+        mockMvc.perform(get("/api/v1/admin/products/" + overrideProductId)
+                        .header(HttpHeaders.AUTHORIZATION, adminToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.variants[0].sku").value("COST-OV"))
+                .andExpect(jsonPath("$.data.variants[0].price").value(120.00))
+                .andExpect(jsonPath("$.data.variants[0].priceOverride").value(120.00));
+
+        // Public detail carries the variant but NEVER costPrice or priceOverride.
+        mockMvc.perform(get("/api/v1/products/" + productId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.variants[0].sku").value("COST-42"))
+                .andExpect(jsonPath("$.data.variants[0].costPrice").doesNotExist())
+                .andExpect(jsonPath("$.data.variants[0].priceOverride").doesNotExist());
+
+        // A missing costPrice on a variant write is a 400 VALIDATION_ERROR.
+        mockMvc.perform(post("/api/v1/products/" + productId + "/variants")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"color\":\"Red\",\"size\":\"43\",\"stockQuantity\":5,\"sku\":\"COST-43\","
+                                + "\"status\":\"ACTIVE\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+
+        // A negative costPrice is a 400 VALIDATION_ERROR.
+        mockMvc.perform(post("/api/v1/products/" + productId + "/variants")
+                        .header(HttpHeaders.AUTHORIZATION, adminToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"color\":\"Red\",\"size\":\"44\",\"stockQuantity\":5,\"sku\":\"COST-44\","
+                                + "\"status\":\"ACTIVE\",\"costPrice\":-1}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+    }
+
+    /**
      * After a soft delete the product disappears from the public reads: the catalog search excludes
      * it (soft-delete-aware repository query) and its detail resolves to {@code 404}, while the row
      * still exists in the database (business-rules → Product).
@@ -160,7 +248,7 @@ class CatalogFlowIntegrationTest {
         mockMvc.perform(post("/api/v1/products/" + productId + "/variants")
                         .header(HttpHeaders.AUTHORIZATION, adminToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"color\":\"White\",\"size\":\"41\",\"stockQuantity\":3,\"sku\":\"SD-41\",\"status\":\"ACTIVE\"}"))
+                        .content("{\"color\":\"White\",\"size\":\"41\",\"stockQuantity\":3,\"sku\":\"SD-41\",\"status\":\"ACTIVE\",\"costPrice\":80.00}"))
                 .andExpect(status().isCreated());
 
         // Visible before deletion.
