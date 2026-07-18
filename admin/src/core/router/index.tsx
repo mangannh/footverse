@@ -12,6 +12,9 @@ import { CategoryRepository } from '@/features/category/repositories/category-re
 import { CouponFormPage } from '@/features/coupon/pages/coupon-form-page';
 import { CouponListPage } from '@/features/coupon/pages/coupon-list-page';
 import { CouponRepository } from '@/features/coupon/repositories/coupon-repository';
+import { OrderDetailPage } from '@/features/order/pages/order-detail-page';
+import { OrderListPage } from '@/features/order/pages/order-list-page';
+import { OrderRepository } from '@/features/order/repositories/order-repository';
 import { ProductFormPage } from '@/features/product/pages/product-form-page';
 import { ProductListPage } from '@/features/product/pages/product-list-page';
 import { ProductRepository } from '@/features/product/repositories/product-repository';
@@ -27,6 +30,7 @@ const brandRepository = new BrandRepository(httpClient);
 const categoryRepository = new CategoryRepository(httpClient);
 const productRepository = new ProductRepository(httpClient);
 const couponRepository = new CouponRepository(httpClient);
+const orderRepository = new OrderRepository(httpClient);
 
 /**
  * The single React Router configuration (react-guidelines §Routing) — the analog
@@ -87,6 +91,13 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <CouponListPage repository={couponRepository} /> },
           { path: 'form', element: <CouponFormPage repository={couponRepository} /> },
+        ],
+      },
+      {
+        path: ROUTES.orders,
+        children: [
+          { index: true, element: <OrderListPage repository={orderRepository} /> },
+          { path: ':id', element: <OrderDetailPage repository={orderRepository} /> },
         ],
       },
     ],

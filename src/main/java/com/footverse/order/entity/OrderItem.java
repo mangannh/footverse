@@ -29,6 +29,13 @@ import lombok.Setter;
  * module's entities; the database still enforces referential integrity through the
  * {@code fk_order_item_product_variant} RESTRICT foreign key. The product name, image, color, size,
  * and unit price are snapshots frozen at checkout (database-spec §12).</p>
+ *
+ * <p>{@link #unitCostPrice} is a further checkout snapshot (database-spec §10.12/§12, Sprint 12):
+ * the variant's unit cost basis <em>as of the sale</em>, written once at checkout and never
+ * restated by a later cost edit — the immutable margin basis a future dashboard (Sprint 13) will
+ * read. It is {@code null} for every line placed before this snapshot existed; {@code null} means
+ * exactly that ("placed before cost tracking"), <strong>never</strong> that the item was free. It
+ * is exposed by no DTO and participates in no computation in Sprint 12.</p>
  */
 @Getter
 @Setter
@@ -67,4 +74,7 @@ public class OrderItem extends BaseEntity {
 
     @Column(name = "line_total", nullable = false, precision = 12, scale = 2)
     private BigDecimal lineTotal;
+
+    @Column(name = "unit_cost_price", precision = 12, scale = 2)
+    private BigDecimal unitCostPrice;
 }

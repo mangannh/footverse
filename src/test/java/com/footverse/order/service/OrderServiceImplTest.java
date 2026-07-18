@@ -6,10 +6,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -39,6 +41,8 @@ import com.footverse.common.exception.BusinessException;
 import com.footverse.common.exception.DuplicateResourceException;
 import com.footverse.common.exception.ResourceNotFoundException;
 import com.footverse.common.security.CurrentUserProvider;
+import com.footverse.order.dto.AdminOrderDetailResponse;
+import com.footverse.order.dto.AdminOrderSummaryResponse;
 import com.footverse.order.dto.CouponPreviewRequest;
 import com.footverse.order.dto.CouponPreviewResponse;
 import com.footverse.order.dto.CouponResponse;
@@ -132,7 +136,7 @@ class OrderServiceImplTest {
                 .thenReturn(List.of(new CheckoutCartLine(CART_ITEM_ID, VARIANT_ID, quantity)));
         when(productVariantService.getPurchaseSnapshot(VARIANT_ID)).thenReturn(
                 new ProductVariantPurchaseSnapshot(VARIANT_ID, 100L, "Air Force 1", "img.png", "Black", "42",
-                        new BigDecimal(unitPrice), 50, true));
+                        new BigDecimal(unitPrice), new BigDecimal("50.00"), 50, true));
     }
 
     private Coupon coupon(DiscountType type, String discountValue, String minOrder, String maxDiscount,
@@ -616,7 +620,7 @@ class OrderServiceImplTest {
     private void withProductResolution() {
         when(productVariantService.getPurchaseSnapshot(VARIANT_ID)).thenReturn(
                 new ProductVariantPurchaseSnapshot(VARIANT_ID, PRODUCT_ID, "Air Force 1", "img.png", "Black",
-                        "42", new BigDecimal("100.00"), 50, true));
+                        "42", new BigDecimal("100.00"), new BigDecimal("50.00"), 50, true));
     }
 
     private OrderDetailResponse detailResponse() {
@@ -626,13 +630,16 @@ class OrderServiceImplTest {
                 null, List.of(itemResponse()), LocalDateTime.now(), null, null);
     }
 
+    /** The variant cost basis stubbed by {@link #withCheckoutLine(int, String)} (sprint-12-plan Task 02). */
+    private static final BigDecimal CHECKOUT_LINE_COST_PRICE = new BigDecimal("50.00");
+
     /** Stubs the checkout cart resolution (locked read) and its variant snapshot. */
     private void withCheckoutLine(int quantity, String unitPrice) {
         when(cartService.resolveCheckoutItems(List.of(CART_ITEM_ID)))
                 .thenReturn(List.of(new CheckoutCartLine(CART_ITEM_ID, VARIANT_ID, quantity)));
         when(productVariantService.getPurchaseSnapshot(VARIANT_ID)).thenReturn(
                 new ProductVariantPurchaseSnapshot(VARIANT_ID, 100L, "Air Force 1", "img.png", "Black", "42",
-                        new BigDecimal(unitPrice), 50, true));
+                        new BigDecimal(unitPrice), CHECKOUT_LINE_COST_PRICE, 50, true));
     }
 
     /** Stubs the persistence collaborators of a successful checkout (order flush, item save, mapping). */
@@ -706,6 +713,28 @@ class OrderServiceImplTest {
             assertThat(item.getQuantity()).isEqualTo(2);
             assertThat(item.getLineTotal()).isEqualByComparingTo("200.00");
         });
+    }
+
+    /**
+     * A checkout item also snapshots the variant's cost basis ({@code unitCostPrice}) from the
+     * purchase snapshot — every line built by the checkout builder carries it, not just the display
+     * fields (sprint-12-plan Task 02).
+     */
+    @Test
+    void placeOrderSnapshotsUnitCostPriceOntoEveryLine() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        withCheckoutLine(2, "100.00");
+        when(addressService.getMyAddress(ADDRESS_ID)).thenReturn(address());
+        withSuccessfulPersistence();
+
+        service.placeOrder(placeRequest(null));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<OrderItem>> itemsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(orderItemRepository).saveAll(itemsCaptor.capture());
+        assertThat(itemsCaptor.getValue()).singleElement().satisfies(item ->
+                assertThat(item.getUnitCostPrice()).isEqualByComparingTo(CHECKOUT_LINE_COST_PRICE));
     }
 
     /**
@@ -1128,6 +1157,166 @@ class OrderServiceImplTest {
         when(orderRepository.findById(9L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.updateOrderStatus(9L, statusRequest(OrderStatus.CONFIRMED)))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "ORDER_NOT_FOUND")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.NOT_FOUND);
+    }
+
+    // ----- Admin order read (adminListOrders / adminGetOrder, sprint-12-plan Task 01) -----
+
+    private AdminOrderSummaryResponse adminSummary(int itemCount) {
+        return new AdminOrderSummaryResponse(5L, "FV-ORDER-5", OrderStatus.PENDING, PaymentStatus.UNPAID,
+                new BigDecimal("30200.00"), itemCount, LocalDateTime.now(), 42L, "Jane Doe",
+                "jane@example.com", "0900000001");
+    }
+
+    private AdminOrderDetailResponse adminDetail() {
+        return new AdminOrderDetailResponse(9L, "FV-ORDER-9", OrderStatus.PENDING, PaymentMethod.COD,
+                PaymentStatus.UNPAID, new BigDecimal("200.00"), BigDecimal.ZERO, new BigDecimal("30000.00"),
+                new BigDecimal("30200.00"), null, "Jane", "0900000000", "HCM", "D1", "W1", "1 Street", null,
+                List.of(itemResponse()), LocalDateTime.now(), null, null, 999L, "Someone Else",
+                "someone@example.com", "0900000099");
+    }
+
+    /**
+     * The admin list is always ordered {@code createdAt} descending, mirroring
+     * {@code getMyOrders}: the service overrides any client-supplied sort before delegating to the
+     * search query.
+     */
+    @Test
+    void adminListOrdersForcesCreatedAtDescendingSort() {
+        init();
+        when(orderRepository.searchForAdmin(any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service.adminListOrders(null, null, PageRequest.of(2, 15, Sort.by(Sort.Direction.ASC, "total")));
+
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        verify(orderRepository).searchForAdmin(isNull(), isNull(), pageable.capture());
+        Pageable used = pageable.getValue();
+        assertThat(used.getPageNumber()).isEqualTo(2);
+        assertThat(used.getPageSize()).isEqualTo(15);
+        Sort.Order createdAt = used.getSort().getOrderFor("createdAt");
+        assertThat(createdAt).isNotNull();
+        assertThat(createdAt.getDirection()).isEqualTo(Sort.Direction.DESC);
+        assertThat(used.getSort().getOrderFor("total")).isNull();
+    }
+
+    /**
+     * A blank {@code orderCode} is normalised to {@code null} in the service before the repository
+     * call, so it never becomes a {@code LIKE %%} scan.
+     */
+    @Test
+    void adminListOrdersNormalisesBlankOrderCodeToNull() {
+        init();
+        when(orderRepository.searchForAdmin(any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service.adminListOrders(null, "   ", PageRequest.of(0, 20));
+
+        verify(orderRepository).searchForAdmin(isNull(), isNull(), any(Pageable.class));
+    }
+
+    /**
+     * The {@code status} filter alone is passed straight through to the repository.
+     */
+    @Test
+    void adminListOrdersWithStatusOnlyPassesTheFilterThrough() {
+        init();
+        when(orderRepository.searchForAdmin(eq(OrderStatus.DELIVERED), isNull(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service.adminListOrders(OrderStatus.DELIVERED, null, PageRequest.of(0, 20));
+
+        verify(orderRepository).searchForAdmin(eq(OrderStatus.DELIVERED), isNull(), any(Pageable.class));
+    }
+
+    /**
+     * The {@code orderCode} search alone is passed straight through to the repository.
+     */
+    @Test
+    void adminListOrdersWithOrderCodeOnlyPassesTheSearchThrough() {
+        init();
+        when(orderRepository.searchForAdmin(isNull(), eq("FV-2026"), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service.adminListOrders(null, "FV-2026", PageRequest.of(0, 20));
+
+        verify(orderRepository).searchForAdmin(isNull(), eq("FV-2026"), any(Pageable.class));
+    }
+
+    /**
+     * The {@code status} filter and the {@code orderCode} search combine — both are passed to the
+     * repository together, neither overriding the other.
+     */
+    @Test
+    void adminListOrdersWithStatusAndOrderCodeCombinesBoth() {
+        init();
+        when(orderRepository.searchForAdmin(eq(OrderStatus.PENDING), eq("FV-2026"), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service.adminListOrders(OrderStatus.PENDING, "FV-2026", PageRequest.of(0, 20));
+
+        verify(orderRepository).searchForAdmin(eq(OrderStatus.PENDING), eq("FV-2026"), any(Pageable.class));
+    }
+
+    /**
+     * The admin list maps each order through {@code toAdminSummaryResponse} with the item count
+     * computed the same way {@code getMyOrders} computes it — by the service, never the mapper.
+     */
+    @Test
+    void adminListOrdersMapsEachOrderWithComputedItemCount() {
+        init();
+        Order order = order(5L);
+        when(orderRepository.searchForAdmin(any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(order)));
+        when(orderItemRepository.findByOrderIdIn(List.of(5L)))
+                .thenReturn(List.of(orderLine(order, 2), orderLine(order, 3)));
+        when(orderMapper.toAdminSummaryResponse(eq(order), anyInt())).thenReturn(adminSummary(5));
+
+        PageResponse<AdminOrderSummaryResponse> page = service.adminListOrders(null, null, PageRequest.of(0, 20));
+
+        assertThat(page.content()).hasSize(1);
+        ArgumentCaptor<Integer> itemCount = ArgumentCaptor.forClass(Integer.class);
+        verify(orderMapper).toAdminSummaryResponse(eq(order), itemCount.capture());
+        assertThat(itemCount.getValue()).isEqualTo(5);
+    }
+
+    /**
+     * {@code adminGetOrder} resolves an order owned by a user other than any caller and performs
+     * <strong>no</strong> ownership check at all — the admin read bypasses ownership entirely
+     * (security-spec §7); it never even consults {@link CurrentUserProvider}.
+     */
+    @Test
+    void adminGetOrderReadsAnotherUsersOrderWithNoOwnershipCheck() {
+        init();
+        Order order = adminOrder(9L, OrderStatus.PENDING);
+        User owner = new User();
+        owner.setId(999L);
+        order.setUser(owner);
+        OrderItem line = orderLineWithVariant(order, VARIANT_ID, 2);
+        when(orderItemRepository.findByOrderId(9L)).thenReturn(List.of(line));
+        withProductResolution();
+        when(orderMapper.toResponse(eq(line), any())).thenReturn(itemResponse());
+        AdminOrderDetailResponse detail = adminDetail();
+        when(orderMapper.toAdminDetailResponse(eq(order), anyList())).thenReturn(detail);
+
+        AdminOrderDetailResponse result = service.adminGetOrder(9L);
+
+        assertThat(result).isSameAs(detail);
+        verifyNoInteractions(currentUserProvider);
+    }
+
+    /**
+     * An unknown order id is the {@code 404 ORDER_NOT_FOUND} — the admin read reuses the existing
+     * code and mints no new one.
+     */
+    @Test
+    void adminGetOrderForUnknownOrderIsNotFound() {
+        init();
+        when(orderRepository.findById(9L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.adminGetOrder(9L))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasFieldOrPropertyWithValue("errorCode", "ORDER_NOT_FOUND")
                 .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.NOT_FOUND);

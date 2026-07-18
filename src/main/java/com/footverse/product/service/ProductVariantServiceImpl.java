@@ -93,6 +93,7 @@ public class ProductVariantServiceImpl implements ProductVariantService {
                 variant.getColor(),
                 variant.getSize(),
                 productVariantMapper.effectivePrice(variant),
+                variant.getCostPrice(),
                 variant.getStockQuantity(),
                 variant.getStatus() == ProductVariantStatus.ACTIVE);
     }

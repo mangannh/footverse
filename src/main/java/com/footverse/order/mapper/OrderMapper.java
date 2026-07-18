@@ -5,6 +5,8 @@ import java.util.List;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
+import com.footverse.order.dto.AdminOrderDetailResponse;
+import com.footverse.order.dto.AdminOrderSummaryResponse;
 import com.footverse.order.dto.OrderDetailResponse;
 import com.footverse.order.dto.OrderItemResponse;
 import com.footverse.order.dto.OrderSummaryResponse;
@@ -62,4 +64,39 @@ public interface OrderMapper {
      */
     @Mapping(target = "couponCode", source = "order.coupon.code")
     OrderDetailResponse toDetailResponse(Order order, List<OrderItemResponse> items);
+
+    /**
+     * Maps an order to its ADMIN summary response (dto-spec §15, Sprint 12), copying the order's own
+     * fields plus the owning customer's account identity, resolved by walking the order's existing
+     * {@code user} association — a plain reference walk, not an aggregation, exactly like
+     * {@code couponCode} above. The aggregate {@code itemCount} is supplied by the service, never
+     * computed here, exactly as {@link #toSummaryResponse(Order, int)}.
+     *
+     * @param order     the order entity
+     * @param itemCount the sum of the order-item quantities, computed by the service
+     * @return the ADMIN summary response
+     */
+    @Mapping(target = "customerId", source = "order.user.id")
+    @Mapping(target = "customerFullName", source = "order.user.fullName")
+    @Mapping(target = "customerEmail", source = "order.user.email")
+    @Mapping(target = "customerPhone", source = "order.user.phone")
+    AdminOrderSummaryResponse toAdminSummaryResponse(Order order, int itemCount);
+
+    /**
+     * Maps an order to its ADMIN detail response (dto-spec §15, Sprint 12), copying the order's own
+     * fields (including the shipping snapshot, which is the delivery address), the applied coupon's
+     * code, and the owning customer's account identity, resolved by walking the order's existing
+     * {@code user} association. The {@code items} list is supplied by the service, never built here,
+     * exactly as {@link #toDetailResponse(Order, List)}.
+     *
+     * @param order the order entity
+     * @param items the order's line responses, assembled by the service
+     * @return the ADMIN detail response
+     */
+    @Mapping(target = "couponCode", source = "order.coupon.code")
+    @Mapping(target = "customerId", source = "order.user.id")
+    @Mapping(target = "customerFullName", source = "order.user.fullName")
+    @Mapping(target = "customerEmail", source = "order.user.email")
+    @Mapping(target = "customerPhone", source = "order.user.phone")
+    AdminOrderDetailResponse toAdminDetailResponse(Order order, List<OrderItemResponse> items);
 }

@@ -3,6 +3,8 @@ package com.footverse.order.service;
 import org.springframework.data.domain.Pageable;
 
 import com.footverse.common.dto.PageResponse;
+import com.footverse.order.dto.AdminOrderDetailResponse;
+import com.footverse.order.dto.AdminOrderSummaryResponse;
 import com.footverse.order.dto.CouponPreviewRequest;
 import com.footverse.order.dto.CouponPreviewResponse;
 import com.footverse.order.dto.CouponResponse;
@@ -12,14 +14,17 @@ import com.footverse.order.dto.OrderSummaryResponse;
 import com.footverse.order.dto.PlaceOrderRequest;
 import com.footverse.order.dto.UpdateCouponRequest;
 import com.footverse.order.dto.UpdateOrderStatusRequest;
+import com.footverse.order.entity.OrderStatus;
 
 /**
  * Single service of the {@code order} module. It owns all order-related logic, including the coupon
- * concern, which lives here rather than in a standalone service (architecture-spec §4, §13).
+ * concern, which lives here rather than in a standalone service (architecture-spec §4, §13). Admin
+ * order operations live here too — there is no {@code OrderAdminService}
+ * (architecture-spec §20, sprint-12-plan Design Decision 3).
  *
  * <p>This sprint delivers the admin coupon CRUD, the read-only checkout preview, the transactional
- * checkout, the caller-scoped order queries, customer cancellation, and the admin order-status
- * machine.</p>
+ * checkout, the caller-scoped order queries, customer cancellation, the admin order-status machine,
+ * and the admin order read surface (sprint-12-plan Task 01).</p>
  */
 public interface OrderService {
 
@@ -203,4 +208,37 @@ public interface OrderService {
      *         when no order has the given id
      */
     OrderDetailResponse updateOrderStatus(Long id, UpdateOrderStatusRequest request);
+
+    /**
+     * Returns a page of orders for ADMIN management, most-recent-first, optionally filtered by
+     * {@code status} and/or searched by an {@code orderCode} fragment (contains match) — the read
+     * surface that closes the contract gap blocking order administration (dto-spec §15,
+     * sprint-12-plan Task 01). This is an admin operation: it performs <strong>no</strong> ownership
+     * check (security-spec §7 — ADMIN endpoints bypass ownership) and returns orders across every
+     * customer. A blank {@code orderCode} is normalised to "no search" here, so the repository never
+     * receives one; the sort is forced to {@code createdAt} descending, exactly as
+     * {@link #getMyOrders(Pageable)}.
+     *
+     * @param status    the status to filter by, or {@code null} for every status
+     * @param orderCode the order-code fragment to search for (contains match), or {@code null}/blank
+     *                  for no search
+     * @param pageable  the pagination request (its page and size are honoured; the sort is overridden
+     *                  with {@code createdAt} descending)
+     * @return the page of matching orders, each carrying the owning customer's identity, newest first
+     */
+    PageResponse<AdminOrderSummaryResponse> adminListOrders(OrderStatus status, String orderCode, Pageable pageable);
+
+    /**
+     * Returns one order in full detail for ADMIN, resolved by id alone (dto-spec §15,
+     * sprint-12-plan Task 01). This is an admin operation: it performs <strong>no</strong> ownership
+     * check (security-spec §7) — any order may be read regardless of owner. The response carries the
+     * owning customer's account identity alongside the same checkout snapshots
+     * {@link #getMyOrder(Long)} returns.
+     *
+     * @param id the order id
+     * @return the order's full detail, carrying the owning customer's identity
+     * @throws com.footverse.common.exception.ResourceNotFoundException {@code 404 ORDER_NOT_FOUND}
+     *         when no order has the given id
+     */
+    AdminOrderDetailResponse adminGetOrder(Long id);
 }

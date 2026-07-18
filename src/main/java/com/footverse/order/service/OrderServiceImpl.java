@@ -28,6 +28,8 @@ import com.footverse.common.exception.BusinessException;
 import com.footverse.common.exception.DuplicateResourceException;
 import com.footverse.common.exception.ResourceNotFoundException;
 import com.footverse.common.security.CurrentUserProvider;
+import com.footverse.order.dto.AdminOrderDetailResponse;
+import com.footverse.order.dto.AdminOrderSummaryResponse;
 import com.footverse.order.dto.CouponPreviewRequest;
 import com.footverse.order.dto.CouponPreviewResponse;
 import com.footverse.order.dto.CouponResponse;
@@ -280,6 +282,27 @@ public class OrderServiceImpl implements OrderService {
         applyStatusTransition(order, request.status(), items);
         List<OrderItemResponse> itemResponses = toItemResponses(items);
         return orderMapper.toDetailResponse(order, itemResponses);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<AdminOrderSummaryResponse> adminListOrders(OrderStatus status, String orderCode,
+            Pageable pageable) {
+        String normalizedOrderCode = orderCode == null || orderCode.isBlank() ? null : orderCode;
+        Page<Order> orders = orderRepository.searchForAdmin(status, normalizedOrderCode, mostRecentFirst(pageable));
+        Map<Long, Integer> itemCounts = itemCountsByOrder(orders.getContent());
+        return PageResponse.from(orders.map(order ->
+                orderMapper.toAdminSummaryResponse(order, itemCounts.getOrDefault(order.getId(), 0))));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public AdminOrderDetailResponse adminGetOrder(Long id) {
+        // Admin operation — ownership is bypassed (security-spec §7); resolve by id alone.
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException(ORDER_NOT_FOUND_CODE, ORDER_NOT_FOUND_MESSAGE));
+        List<OrderItemResponse> items = toItemResponses(orderItemRepository.findByOrderId(order.getId()));
+        return orderMapper.toAdminDetailResponse(order, items);
     }
 
     /**
@@ -544,6 +567,12 @@ public class OrderServiceImpl implements OrderService {
      * never reading the catalog again — so later catalog edits cannot alter a placed order. Each line
      * total is {@code unitPrice × quantity}.
      *
+     * <p>It also snapshots {@code unitCostPrice} from the same purchase snapshot (database-spec
+     * §10.12/§12, sprint-12-plan Task 02) — the variant's cost basis <em>as of this sale</em>,
+     * written here exactly once and never restated by a later
+     * {@code PUT /products/{id}/variants/{variantId}} cost edit. It participates in no money
+     * computation and is exposed by no DTO in Sprint 12.</p>
+     *
      * @param order       the owning (persisted) order
      * @param pricedLines the priced selected lines
      * @return the order items, not yet persisted
@@ -560,6 +589,7 @@ public class OrderServiceImpl implements OrderService {
             item.setColor(snapshot.color());
             item.setSize(snapshot.size());
             item.setUnitPrice(snapshot.unitPrice());
+            item.setUnitCostPrice(snapshot.costPrice());
             item.setQuantity(priced.line().quantity());
             item.setLineTotal(priced.lineTotal());
             items.add(item);

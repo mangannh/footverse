@@ -20,6 +20,10 @@ import java.math.BigDecimal;
  * @param size             the variant size
  * @param unitPrice        the effective selling price: the variant's {@code priceOverride} when
  *                         set, otherwise the owning product's {@code basePrice}
+ * @param costPrice        the variant's ADMIN-only unit cost basis, consumed only by the
+ *                         {@code order} module's checkout item snapshot (Sprint 12,
+ *                         {@code order_item.unit_cost_price}) — never exposed on any customer or
+ *                         public response
  * @param stockQuantity    the variant's stock on hand
  * @param active           whether the variant's status is {@code ACTIVE}
  */
@@ -31,6 +35,7 @@ public record ProductVariantPurchaseSnapshot(
         String color,
         String size,
         BigDecimal unitPrice,
+        BigDecimal costPrice,
         int stockQuantity,
         boolean active) {
 }

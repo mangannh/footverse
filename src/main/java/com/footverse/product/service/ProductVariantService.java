@@ -61,9 +61,10 @@ public interface ProductVariantService {
 
     /**
      * Returns the purchase snapshot of a single variant: the owning product's id / name / primary
-     * image URL, the variant's color, size and stock, whether it is {@code ACTIVE}, and the already
-     * resolved effective unit price. Callers use the snapshot as-is and never recompute the price
-     * (architecture-spec §7).
+     * image URL, the variant's color, size and stock, whether it is {@code ACTIVE}, the already
+     * resolved effective unit price, and the variant's ADMIN-only unit cost basis (consumed only by
+     * the {@code order} module's checkout item snapshot, Sprint 12). Callers use the snapshot as-is
+     * and never recompute the price (architecture-spec §7).
      *
      * @param variantId the variant id
      * @return the variant's purchase snapshot

@@ -24,12 +24,12 @@ import lombok.RequiredArgsConstructor;
  * (security-spec §6), the BCrypt password encoder, and the enveloped 401/403 handlers.
  *
  * <p>The {@link JwtFilter} authenticates Bearer access tokens and populates the caller's role
- * authority. Public catalog reads stay open; the admin catalog writes and admin coupon management
- * (plus the admin order status transition) require {@code ROLE_ADMIN}; the customer-owned shopping
- * resources (address, cart, wishlist), the checkout preview, the order endpoints, and the review
- * write paths require {@code ROLE_CUSTOMER}; every other endpoint requires authentication. A denied
- * authorization is
- * rendered as the enveloped {@code 403} by the {@link RestAccessDeniedHandler}.</p>
+ * authority. Public catalog reads stay open; the admin catalog writes, admin coupon management, the
+ * admin order status transition, and the admin order read surface require {@code ROLE_ADMIN}; the
+ * customer-owned shopping resources (address, cart, wishlist), the checkout preview, the customer
+ * order endpoints, and the review write paths require {@code ROLE_CUSTOMER}; every other endpoint
+ * requires authentication. A denied authorization is rendered as the enveloped {@code 403} by the
+ * {@link RestAccessDeniedHandler}.</p>
  */
 @Configuration
 @RequiredArgsConstructor
@@ -82,6 +82,11 @@ public class SecurityConfig {
                         // reads carry the ADMIN-only costPrice, so they are ADMIN-gated. The path is
                         // distinct from the public GET /api/v1/products/** permitAll rule above.
                         .requestMatchers(HttpMethod.GET, "/api/v1/admin/products/**").hasRole("ADMIN")
+                        // Admin order read surface (security-spec §6, Sprint 12): the /admin/orders
+                        // reads bypass ownership (security-spec §7) and carry the owning customer's
+                        // identity, so they are ADMIN-gated. The path is distinct from the CUSTOMER
+                        // /api/v1/orders/** rule below (different third segment: "admin" vs "orders").
+                        .requestMatchers(HttpMethod.GET, "/api/v1/admin/orders/**").hasRole("ADMIN")
                         // Customer-owned shopping resources (security-spec §6). Every HTTP method is
                         // CUSTOMER-only — deliberately excluding ADMIN, unlike the CUSTOMER+ADMIN
                         // /users/me rows. Ownership (a caller acts only on their own rows) is enforced
