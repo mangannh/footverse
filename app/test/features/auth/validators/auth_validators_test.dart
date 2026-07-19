@@ -71,4 +71,22 @@ void main() {
       expect(AuthValidators.phone('0901234567'), isNull);
     });
   });
+
+  group('validateOtp', () {
+    test('required when blank', () {
+      expect(AuthValidators.validateOtp(null), isNotNull);
+      expect(AuthValidators.validateOtp(''), isNotNull);
+      expect(AuthValidators.validateOtp('   '), isNotNull);
+    });
+
+    test('rejects the spec example invalids', () {
+      expect(AuthValidators.validateOtp('12345'), isNotNull); // five digits
+      expect(AuthValidators.validateOtp('abcdef'), isNotNull); // non-digit
+      expect(AuthValidators.validateOtp('1234567'), isNotNull); // seven digits
+    });
+
+    test('accepts exactly six digits', () {
+      expect(AuthValidators.validateOtp('123456'), isNull);
+    });
+  });
 }

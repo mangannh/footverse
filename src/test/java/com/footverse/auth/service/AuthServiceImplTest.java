@@ -12,6 +12,8 @@ import static org.mockito.Mockito.when;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,13 +25,20 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import com.footverse.auth.dto.AuthResponse;
+import com.footverse.auth.dto.ForgotPasswordRequest;
 import com.footverse.auth.dto.LoginRequest;
+import com.footverse.auth.dto.PasswordResetTokenResponse;
 import com.footverse.auth.dto.RefreshTokenRequest;
 import com.footverse.auth.dto.RegisterRequest;
+import com.footverse.auth.dto.ResetPasswordRequest;
+import com.footverse.auth.dto.VerifyResetOtpRequest;
+import com.footverse.auth.entity.PasswordResetToken;
 import com.footverse.auth.entity.RefreshToken;
+import com.footverse.auth.repository.PasswordResetTokenRepository;
 import com.footverse.auth.repository.RefreshTokenRepository;
 import com.footverse.common.exception.BusinessException;
 import com.footverse.common.exception.DuplicateResourceException;
+import com.footverse.common.mail.EmailSender;
 import com.footverse.common.security.CurrentUserProvider;
 import com.footverse.common.security.JwtUtil;
 import com.footverse.common.util.TokenHasher;
@@ -39,19 +48,26 @@ import com.footverse.user.entity.User;
 import com.footverse.user.service.UserService;
 
 /**
- * Unit tests for the registration flow in {@link AuthServiceImpl}.
+ * Unit tests for {@link AuthServiceImpl}: registration, login, refresh rotation, logout, and the
+ * password-reset flow (Sprint 13 Task 05).
  */
 @ExtendWith(MockitoExtension.class)
 class AuthServiceImplTest {
 
     private static final long ACCESS_TTL = 900L;
     private static final long REFRESH_TTL = 2_592_000L;
+    private static final long OTP_TTL = 600L;
+    private static final long RESET_TOKEN_TTL = 900L;
+    private static final int MAX_ATTEMPTS = 5;
 
     @Mock
     private UserService userService;
 
     @Mock
     private RefreshTokenRepository refreshTokenRepository;
+
+    @Mock
+    private PasswordResetTokenRepository passwordResetTokenRepository;
 
     @Mock
     private PasswordEncoder passwordEncoder;
@@ -62,14 +78,26 @@ class AuthServiceImplTest {
     @Mock
     private CurrentUserProvider currentUserProvider;
 
+    @Mock
+    private EmailSender emailSender;
+
     private final TokenHasher tokenHasher = new TokenHasher();
 
     private AuthServiceImpl authService;
 
     @BeforeEach
     void setUp() {
-        authService = new AuthServiceImpl(userService, refreshTokenRepository, passwordEncoder, jwtUtil,
-                tokenHasher, currentUserProvider, ACCESS_TTL, REFRESH_TTL);
+        authService = new AuthServiceImpl(userService, refreshTokenRepository, passwordResetTokenRepository,
+                passwordEncoder, jwtUtil, tokenHasher, currentUserProvider, emailSender,
+                ACCESS_TTL, REFRESH_TTL, OTP_TTL, RESET_TOKEN_TTL, MAX_ATTEMPTS);
+    }
+
+    private PasswordResetToken resetTokenRow(User user, String otp, LocalDateTime expiresAt) {
+        PasswordResetToken row = new PasswordResetToken();
+        row.setUser(user);
+        row.setOtpHash(tokenHasher.hash(otp));
+        row.setExpiresAt(expiresAt);
+        return row;
     }
 
     private RegisterRequest request() {
@@ -443,5 +471,254 @@ class AuthServiceImplTest {
         verify(refreshTokenRepository).delete(captor.capture());
         assertThat(captor.getValue()).isEqualTo(presented);
         verify(refreshTokenRepository, never()).deleteAll();
+    }
+
+    /**
+     * A forgot-password request for a registered, enabled account clears any stale attempt, stores
+     * only the OTP's hash with the configured TTL, and emails the raw code — captured here through
+     * the {@link EmailSender} fake rather than asserted against a log.
+     */
+    @Test
+    void forgotPasswordForKnownEnabledAccountStoresHashedOtpAndSendsEmail() {
+        User user = userWithId(1L);
+        when(userService.findByEmail("user@example.com")).thenReturn(Optional.of(user));
+
+        authService.forgotPassword(new ForgotPasswordRequest("User@Example.com"));
+
+        verify(passwordResetTokenRepository).deleteByUserId(1L);
+        ArgumentCaptor<PasswordResetToken> captor = ArgumentCaptor.forClass(PasswordResetToken.class);
+        verify(passwordResetTokenRepository).save(captor.capture());
+        PasswordResetToken saved = captor.getValue();
+        assertThat(saved.getUser()).isEqualTo(user);
+        assertThat(saved.getOtpHash()).hasSize(64);
+        assertThat(saved.getExpiresAt()).isAfter(LocalDateTime.now());
+
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(emailSender).send(eq("user@example.com"), any(), bodyCaptor.capture());
+        String rawOtp = saved.getOtpHash();
+        assertThat(tokenHasher.hash(extractSixDigitCode(bodyCaptor.getValue()))).isEqualTo(rawOtp);
+    }
+
+    private String extractSixDigitCode(String emailBody) {
+        Matcher matcher = Pattern.compile("\\d{6}").matcher(emailBody);
+        assertThat(matcher.find()).isTrue();
+        return matcher.group();
+    }
+
+    /**
+     * An unknown email answers with no exception (the controller still returns {@code 200}) and
+     * sends no email — the non-enumeration contract at the service layer.
+     */
+    @Test
+    void forgotPasswordForUnknownEmailSendsNoEmail() {
+        when(userService.findByEmail("nobody@example.com")).thenReturn(Optional.empty());
+
+        authService.forgotPassword(new ForgotPasswordRequest("nobody@example.com"));
+
+        verify(passwordResetTokenRepository, never()).save(any());
+        verify(emailSender, never()).send(any(), any(), any());
+    }
+
+    /**
+     * A disabled account answers with no exception and sends no email, exactly like an unknown
+     * email — the response must not distinguish the two.
+     */
+    @Test
+    void forgotPasswordForDisabledAccountSendsNoEmail() {
+        User user = savedUser();
+        user.setEnabled(false);
+        when(userService.findByEmail("user@example.com")).thenReturn(Optional.of(user));
+
+        authService.forgotPassword(new ForgotPasswordRequest("user@example.com"));
+
+        verify(passwordResetTokenRepository, never()).save(any());
+        verify(emailSender, never()).send(any(), any(), any());
+    }
+
+    /**
+     * A correct one-time code issues an opaque reset token, stores only its hash alongside
+     * {@code verifiedAt}, and re-points {@code expiresAt} at the (shorter) reset-token TTL.
+     */
+    @Test
+    void verifyResetOtpWithCorrectCodeIssuesResetToken() {
+        User user = userWithId(1L);
+        PasswordResetToken row = resetTokenRow(user, "123456", LocalDateTime.now().plusMinutes(5));
+        when(userService.findByEmail("user@example.com")).thenReturn(Optional.of(user));
+        when(passwordResetTokenRepository.findByUserId(1L)).thenReturn(Optional.of(row));
+
+        PasswordResetTokenResponse response =
+                authService.verifyResetOtp(new VerifyResetOtpRequest("User@Example.com", "123456"));
+
+        assertThat(response.resetToken()).isNotBlank();
+        assertThat(response.expiresIn()).isEqualTo(RESET_TOKEN_TTL);
+        ArgumentCaptor<PasswordResetToken> captor = ArgumentCaptor.forClass(PasswordResetToken.class);
+        verify(passwordResetTokenRepository).save(captor.capture());
+        PasswordResetToken saved = captor.getValue();
+        assertThat(saved.getResetTokenHash()).isEqualTo(tokenHasher.hash(response.resetToken()));
+        assertThat(saved.getVerifiedAt()).isNotNull();
+        assertThat(saved.getExpiresAt()).isAfter(LocalDateTime.now().plusMinutes(10));
+        verify(passwordResetTokenRepository, never()).delete(any());
+    }
+
+    /**
+     * An unknown email is rejected as 400 {@code PASSWORD_RESET_OTP_INVALID} — indistinguishable
+     * from a wrong code for an existing attempt.
+     */
+    @Test
+    void verifyResetOtpWithUnknownEmailIsRejected() {
+        when(userService.findByEmail("nobody@example.com")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> authService.verifyResetOtp(
+                new VerifyResetOtpRequest("nobody@example.com", "123456")))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("PASSWORD_RESET_OTP_INVALID");
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                });
+    }
+
+    /**
+     * An expired attempt is deleted and rejected as 400 {@code PASSWORD_RESET_OTP_EXPIRED}.
+     */
+    @Test
+    void verifyResetOtpWithExpiredAttemptDeletesRowAndIsRejected() {
+        User user = userWithId(1L);
+        PasswordResetToken row = resetTokenRow(user, "123456", LocalDateTime.now().minusSeconds(1));
+        when(userService.findByEmail("user@example.com")).thenReturn(Optional.of(user));
+        when(passwordResetTokenRepository.findByUserId(1L)).thenReturn(Optional.of(row));
+
+        assertThatThrownBy(() -> authService.verifyResetOtp(
+                new VerifyResetOtpRequest("user@example.com", "123456")))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("PASSWORD_RESET_OTP_EXPIRED");
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                });
+        verify(passwordResetTokenRepository).delete(row);
+        verify(passwordResetTokenRepository, never()).save(any());
+    }
+
+    /**
+     * A wrong code below the attempt limit increments {@code attemptCount} and is rejected as 400
+     * {@code PASSWORD_RESET_OTP_INVALID}; the row survives for a further attempt.
+     */
+    @Test
+    void verifyResetOtpWithWrongCodeIncrementsAttemptsAndSurvives() {
+        User user = userWithId(1L);
+        PasswordResetToken row = resetTokenRow(user, "123456", LocalDateTime.now().plusMinutes(5));
+        row.setAttemptCount(MAX_ATTEMPTS - 2);
+        when(userService.findByEmail("user@example.com")).thenReturn(Optional.of(user));
+        when(passwordResetTokenRepository.findByUserId(1L)).thenReturn(Optional.of(row));
+
+        assertThatThrownBy(() -> authService.verifyResetOtp(
+                new VerifyResetOtpRequest("user@example.com", "999999")))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("PASSWORD_RESET_OTP_INVALID");
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                });
+        verify(passwordResetTokenRepository, never()).delete(any());
+        ArgumentCaptor<PasswordResetToken> captor = ArgumentCaptor.forClass(PasswordResetToken.class);
+        verify(passwordResetTokenRepository).save(captor.capture());
+        assertThat(captor.getValue().getAttemptCount()).isEqualTo(MAX_ATTEMPTS - 1);
+    }
+
+    /**
+     * The attempt that reaches {@code maxAttempts} destroys the row instead of saving it, so the
+     * next attempt finds nothing and is rejected the same as an unknown attempt.
+     */
+    @Test
+    void verifyResetOtpReachingMaxAttemptsDestroysRow() {
+        User user = userWithId(1L);
+        PasswordResetToken row = resetTokenRow(user, "123456", LocalDateTime.now().plusMinutes(5));
+        row.setAttemptCount(MAX_ATTEMPTS - 1);
+        when(userService.findByEmail("user@example.com")).thenReturn(Optional.of(user));
+        when(passwordResetTokenRepository.findByUserId(1L)).thenReturn(Optional.of(row));
+
+        assertThatThrownBy(() -> authService.verifyResetOtp(
+                new VerifyResetOtpRequest("user@example.com", "999999")))
+                .isInstanceOfSatisfying(BusinessException.class, ex ->
+                        assertThat(ex.getErrorCode()).isEqualTo("PASSWORD_RESET_OTP_INVALID"));
+        verify(passwordResetTokenRepository).delete(row);
+        verify(passwordResetTokenRepository, never()).save(any());
+    }
+
+    /**
+     * A successful reset re-encodes the password through {@link UserService}, consumes the reset
+     * row (single-use), and revokes every refresh token the account holds.
+     */
+    @Test
+    void resetPasswordWithVerifiedTokenUpdatesPasswordAndRevokesSessions() {
+        User user = userWithId(1L);
+        PasswordResetToken row = resetTokenRow(user, "123456", LocalDateTime.now().plusMinutes(10));
+        row.setResetTokenHash(tokenHasher.hash("verified-reset-token"));
+        row.setVerifiedAt(LocalDateTime.now());
+        when(passwordResetTokenRepository.findByResetTokenHash(tokenHasher.hash("verified-reset-token")))
+                .thenReturn(Optional.of(row));
+        when(passwordEncoder.encode("NewPassword1")).thenReturn("$2a$10$newEncoded");
+
+        authService.resetPassword(new ResetPasswordRequest("verified-reset-token", "NewPassword1"));
+
+        verify(userService).resetPassword(user, "$2a$10$newEncoded");
+        verify(passwordResetTokenRepository).delete(row);
+        verify(refreshTokenRepository).deleteByUserId(1L);
+    }
+
+    /**
+     * An unknown reset token is rejected as 400 {@code PASSWORD_RESET_TOKEN_INVALID}; nothing is
+     * changed.
+     */
+    @Test
+    void resetPasswordWithUnknownTokenIsRejected() {
+        when(passwordResetTokenRepository.findByResetTokenHash(tokenHasher.hash("missing-token")))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> authService.resetPassword(
+                new ResetPasswordRequest("missing-token", "NewPassword1")))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("PASSWORD_RESET_TOKEN_INVALID");
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                });
+        verify(userService, never()).resetPassword(any(), any());
+        verify(refreshTokenRepository, never()).deleteByUserId(any());
+    }
+
+    /**
+     * A reset token whose OTP step was never verified ({@code verifiedAt} unset) is rejected as 400
+     * {@code PASSWORD_RESET_TOKEN_INVALID} — the row exists but is not yet in its reset stage.
+     */
+    @Test
+    void resetPasswordWithUnverifiedTokenIsRejected() {
+        User user = userWithId(1L);
+        PasswordResetToken row = resetTokenRow(user, "123456", LocalDateTime.now().plusMinutes(10));
+        row.setResetTokenHash(tokenHasher.hash("unverified-token"));
+        when(passwordResetTokenRepository.findByResetTokenHash(tokenHasher.hash("unverified-token")))
+                .thenReturn(Optional.of(row));
+
+        assertThatThrownBy(() -> authService.resetPassword(
+                new ResetPasswordRequest("unverified-token", "NewPassword1")))
+                .isInstanceOfSatisfying(BusinessException.class, ex ->
+                        assertThat(ex.getErrorCode()).isEqualTo("PASSWORD_RESET_TOKEN_INVALID"));
+        verify(userService, never()).resetPassword(any(), any());
+    }
+
+    /**
+     * An expired reset token is deleted and rejected as 400 {@code PASSWORD_RESET_TOKEN_EXPIRED}.
+     */
+    @Test
+    void resetPasswordWithExpiredTokenDeletesRowAndIsRejected() {
+        User user = userWithId(1L);
+        PasswordResetToken row = resetTokenRow(user, "123456", LocalDateTime.now().minusSeconds(1));
+        row.setResetTokenHash(tokenHasher.hash("expired-reset-token"));
+        row.setVerifiedAt(LocalDateTime.now().minusMinutes(20));
+        when(passwordResetTokenRepository.findByResetTokenHash(tokenHasher.hash("expired-reset-token")))
+                .thenReturn(Optional.of(row));
+
+        assertThatThrownBy(() -> authService.resetPassword(
+                new ResetPasswordRequest("expired-reset-token", "NewPassword1")))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo("PASSWORD_RESET_TOKEN_EXPIRED");
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                });
+        verify(passwordResetTokenRepository).delete(row);
+        verify(userService, never()).resetPassword(any(), any());
+        verify(refreshTokenRepository, never()).deleteByUserId(any());
     }
 }

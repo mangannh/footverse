@@ -20,6 +20,7 @@ import { useSession } from '@/features/auth/session/use-session';
 const DRAWER_WIDTH = 240;
 
 const SECTIONS = [
+  { label: 'Dashboard', path: ROUTES.dashboard },
   { label: 'Brands', path: ROUTES.brands },
   { label: 'Categories', path: ROUTES.categories },
   { label: 'Products', path: ROUTES.products },
@@ -32,8 +33,9 @@ const SECTIONS = [
  * `ShellRoute` shell (react-guidelines §Component Rules; sprint-10-plan Task 03).
  *
  * It hosts the top `AppBar` (title + sign-out) and a permanent `Drawer` with the
- * Brands / Categories / Products / Coupons / Orders navigation, and renders the active section in the
- * content area via the router `Outlet`. Sign-out clears the session; the guard then
+ * Dashboard / Brands / Categories / Products / Coupons / Orders navigation (Dashboard first,
+ * sprint-13-plan Task 03), and renders the active section in the content area via the router
+ * `Outlet`. Sign-out clears the session; the guard then
  * redirects to login off the session-state change (mirroring the Flutter
  * state-driven redirect). Features plug their pages into the outlet, never the
  * reverse.
@@ -70,15 +72,25 @@ export function AppShell(): ReactElement {
       >
         <Toolbar />
         <List>
-          {SECTIONS.map((section) => (
-            <ListItemButton
-              key={section.path}
-              selected={location.pathname.startsWith(section.path)}
-              onClick={() => navigate(section.path)}
-            >
-              <ListItemText primary={section.label} />
-            </ListItemButton>
-          ))}
+          {SECTIONS.map((section) => {
+            // The shell's index route (`ROUTES.root`) also renders the
+            // dashboard (sprint-13-plan Task 03), so the Dashboard entry is
+            // selected on either path — the only section reachable by two
+            // routes.
+            const isSelected =
+              section.path === ROUTES.dashboard
+                ? location.pathname === ROUTES.root || location.pathname.startsWith(section.path)
+                : location.pathname.startsWith(section.path);
+            return (
+              <ListItemButton
+                key={section.path}
+                selected={isSelected}
+                onClick={() => navigate(section.path)}
+              >
+                <ListItemText primary={section.label} />
+              </ListItemButton>
+            );
+          })}
         </List>
       </Drawer>
       <Box component="main" sx={{ flexGrow: 1, p: 3 }}>

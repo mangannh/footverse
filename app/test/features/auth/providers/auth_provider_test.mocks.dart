@@ -3,15 +3,23 @@
 // Do not manually edit this file.
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
-import 'dart:async' as _i4;
+import 'dart:async' as _i5;
 
 import 'package:footverse/features/auth/models/auth_response.dart' as _i2;
-import 'package:footverse/features/auth/models/login_request.dart' as _i6;
-import 'package:footverse/features/auth/models/refresh_token_request.dart'
-    as _i7;
-import 'package:footverse/features/auth/models/register_request.dart' as _i5;
-import 'package:footverse/features/auth/repositories/auth_repository.dart'
+import 'package:footverse/features/auth/models/forgot_password_request.dart'
+    as _i9;
+import 'package:footverse/features/auth/models/login_request.dart' as _i7;
+import 'package:footverse/features/auth/models/password_reset_token_response.dart'
     as _i3;
+import 'package:footverse/features/auth/models/refresh_token_request.dart'
+    as _i8;
+import 'package:footverse/features/auth/models/register_request.dart' as _i6;
+import 'package:footverse/features/auth/models/reset_password_request.dart'
+    as _i11;
+import 'package:footverse/features/auth/models/verify_reset_otp_request.dart'
+    as _i10;
+import 'package:footverse/features/auth/repositories/auth_repository.dart'
+    as _i4;
 import 'package:mockito/mockito.dart' as _i1;
 
 // ignore_for_file: type=lint
@@ -34,61 +42,107 @@ class _FakeAuthResponse_0 extends _i1.SmartFake implements _i2.AuthResponse {
     : super(parent, parentInvocation);
 }
 
+class _FakePasswordResetTokenResponse_1 extends _i1.SmartFake
+    implements _i3.PasswordResetTokenResponse {
+  _FakePasswordResetTokenResponse_1(Object parent, Invocation parentInvocation)
+    : super(parent, parentInvocation);
+}
+
 /// A class which mocks [AuthRepository].
 ///
 /// See the documentation for Mockito's code generation for more information.
-class MockAuthRepository extends _i1.Mock implements _i3.AuthRepository {
+class MockAuthRepository extends _i1.Mock implements _i4.AuthRepository {
   @override
-  _i4.Future<_i2.AuthResponse> register(_i5.RegisterRequest? request) =>
+  _i5.Future<_i2.AuthResponse> register(_i6.RegisterRequest? request) =>
       (super.noSuchMethod(
             Invocation.method(#register, [request]),
-            returnValue: _i4.Future<_i2.AuthResponse>.value(
+            returnValue: _i5.Future<_i2.AuthResponse>.value(
               _FakeAuthResponse_0(
                 this,
                 Invocation.method(#register, [request]),
               ),
             ),
-            returnValueForMissingStub: _i4.Future<_i2.AuthResponse>.value(
+            returnValueForMissingStub: _i5.Future<_i2.AuthResponse>.value(
               _FakeAuthResponse_0(
                 this,
                 Invocation.method(#register, [request]),
               ),
             ),
           )
-          as _i4.Future<_i2.AuthResponse>);
+          as _i5.Future<_i2.AuthResponse>);
 
   @override
-  _i4.Future<_i2.AuthResponse> login(_i6.LoginRequest? request) =>
+  _i5.Future<_i2.AuthResponse> login(_i7.LoginRequest? request) =>
       (super.noSuchMethod(
             Invocation.method(#login, [request]),
-            returnValue: _i4.Future<_i2.AuthResponse>.value(
+            returnValue: _i5.Future<_i2.AuthResponse>.value(
               _FakeAuthResponse_0(this, Invocation.method(#login, [request])),
             ),
-            returnValueForMissingStub: _i4.Future<_i2.AuthResponse>.value(
+            returnValueForMissingStub: _i5.Future<_i2.AuthResponse>.value(
               _FakeAuthResponse_0(this, Invocation.method(#login, [request])),
             ),
           )
-          as _i4.Future<_i2.AuthResponse>);
+          as _i5.Future<_i2.AuthResponse>);
 
   @override
-  _i4.Future<_i2.AuthResponse> refresh(_i7.RefreshTokenRequest? request) =>
+  _i5.Future<_i2.AuthResponse> refresh(_i8.RefreshTokenRequest? request) =>
       (super.noSuchMethod(
             Invocation.method(#refresh, [request]),
-            returnValue: _i4.Future<_i2.AuthResponse>.value(
+            returnValue: _i5.Future<_i2.AuthResponse>.value(
               _FakeAuthResponse_0(this, Invocation.method(#refresh, [request])),
             ),
-            returnValueForMissingStub: _i4.Future<_i2.AuthResponse>.value(
+            returnValueForMissingStub: _i5.Future<_i2.AuthResponse>.value(
               _FakeAuthResponse_0(this, Invocation.method(#refresh, [request])),
             ),
           )
-          as _i4.Future<_i2.AuthResponse>);
+          as _i5.Future<_i2.AuthResponse>);
 
   @override
-  _i4.Future<void> logout(_i7.RefreshTokenRequest? request) =>
+  _i5.Future<void> logout(_i8.RefreshTokenRequest? request) =>
       (super.noSuchMethod(
             Invocation.method(#logout, [request]),
-            returnValue: _i4.Future<void>.value(),
-            returnValueForMissingStub: _i4.Future<void>.value(),
+            returnValue: _i5.Future<void>.value(),
+            returnValueForMissingStub: _i5.Future<void>.value(),
           )
-          as _i4.Future<void>);
+          as _i5.Future<void>);
+
+  @override
+  _i5.Future<void> forgotPassword(_i9.ForgotPasswordRequest? request) =>
+      (super.noSuchMethod(
+            Invocation.method(#forgotPassword, [request]),
+            returnValue: _i5.Future<void>.value(),
+            returnValueForMissingStub: _i5.Future<void>.value(),
+          )
+          as _i5.Future<void>);
+
+  @override
+  _i5.Future<_i3.PasswordResetTokenResponse> verifyResetOtp(
+    _i10.VerifyResetOtpRequest? request,
+  ) =>
+      (super.noSuchMethod(
+            Invocation.method(#verifyResetOtp, [request]),
+            returnValue: _i5.Future<_i3.PasswordResetTokenResponse>.value(
+              _FakePasswordResetTokenResponse_1(
+                this,
+                Invocation.method(#verifyResetOtp, [request]),
+              ),
+            ),
+            returnValueForMissingStub:
+                _i5.Future<_i3.PasswordResetTokenResponse>.value(
+                  _FakePasswordResetTokenResponse_1(
+                    this,
+                    Invocation.method(#verifyResetOtp, [request]),
+                  ),
+                ),
+          )
+          as _i5.Future<_i3.PasswordResetTokenResponse>);
+
+  @override
+  _i5.Future<void> resetPassword(_i11.ResetPasswordRequest? request) =>
+      (super.noSuchMethod(
+            Invocation.method(#resetPassword, [request]),
+            returnValue: _i5.Future<void>.value(),
+            returnValueForMissingStub: _i5.Future<void>.value(),
+          )
+          as _i5.Future<void>);
 }

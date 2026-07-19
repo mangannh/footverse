@@ -12,6 +12,7 @@ import 'package:footverse/features/order/models/order_item_response.dart';
 import 'package:footverse/features/order/models/order_status.dart';
 import 'package:footverse/features/order/models/payment_method.dart';
 import 'package:footverse/features/order/models/payment_status.dart';
+import 'package:footverse/features/order/models/place_order_request.dart';
 import 'package:footverse/features/order/repositories/order_repository.dart';
 import 'package:footverse/features/order/screens/checkout_screen.dart';
 import 'package:footverse/features/order/screens/order_detail_screen.dart';
@@ -40,25 +41,26 @@ CouponPreviewResponse _preview() => const CouponPreviewResponse(
   total: 130,
 );
 
-OrderDetailResponse _order() => OrderDetailResponse(
-  id: 700,
-  orderCode: 'FV-700',
-  status: OrderStatus.pending,
-  paymentMethod: PaymentMethod.cod,
-  paymentStatus: PaymentStatus.unpaid,
-  subtotal: 100,
-  discountAmount: 0,
-  shippingFee: 30,
-  total: 130,
-  shippingRecipientName: 'Recipient',
-  shippingRecipientPhone: '0901234567',
-  shippingProvince: 'Hà Nội',
-  shippingDistrict: 'Cầu Giấy',
-  shippingWard: 'Dịch Vọng',
-  shippingStreetAddress: '123 Xuân Thủy',
-  items: const <OrderItemResponse>[],
-  createdAt: DateTime.parse('2025-01-15T10:30:00'),
-);
+OrderDetailResponse _order({PaymentMethod paymentMethod = PaymentMethod.cod}) =>
+    OrderDetailResponse(
+      id: 700,
+      orderCode: 'FV-700',
+      status: OrderStatus.pending,
+      paymentMethod: paymentMethod,
+      paymentStatus: PaymentStatus.unpaid,
+      subtotal: 100,
+      discountAmount: 0,
+      shippingFee: 30,
+      total: 130,
+      shippingRecipientName: 'Recipient',
+      shippingRecipientPhone: '0901234567',
+      shippingProvince: 'Hà Nội',
+      shippingDistrict: 'Cầu Giấy',
+      shippingWard: 'Dịch Vọng',
+      shippingStreetAddress: '123 Xuân Thủy',
+      items: const <OrderItemResponse>[],
+      createdAt: DateTime.parse('2025-01-15T10:30:00'),
+    );
 
 CartResponse _cart() =>
     const CartResponse(items: [], subtotal: 0, itemCount: 0);
@@ -75,6 +77,14 @@ GoRouter _router(
         addressRepository: addressRepository,
         cartItemIds: const <int>[1, 2],
       ),
+      routes: <RouteBase>[
+        GoRoute(
+          path: 'payment/:id',
+          name: AppRoute.paymentWebview,
+          builder: (context, state) =>
+              const Scaffold(body: Text('payment-webview-placeholder')),
+        ),
+      ],
     ),
     GoRoute(
       path: '/orders/:id',
@@ -130,4 +140,78 @@ void main() {
     expect(find.byType(OrderDetailScreen), findsOneWidget);
     expect(find.text('FV-700'), findsOneWidget);
   });
+
+  testWidgets('the payment method selector defaults to COD', (tester) async {
+    final orderRepository = MockOrderRepository();
+    final addressRepository = MockAddressRepository();
+    final cartRepository = MockCartRepository();
+    when(
+      addressRepository.getAddresses(),
+    ).thenAnswer((_) async => <AddressResponse>[_address()]);
+    when(
+      orderRepository.previewCoupon(any),
+    ).thenAnswer((_) async => _preview());
+    when(cartRepository.getCart()).thenAnswer((_) async => _cart());
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<CartProvider>.value(
+        value: CartProvider(cartRepository),
+        child: MaterialApp.router(
+          routerConfig: _router(orderRepository, addressRepository),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final group = tester.widget<RadioGroup<PaymentMethod>>(
+      find.byType(RadioGroup<PaymentMethod>),
+    );
+    expect(group.groupValue, PaymentMethod.cod);
+    expect(find.text('Cash on Delivery'), findsOneWidget);
+    expect(find.text('VNPay'), findsOneWidget);
+  });
+
+  testWidgets(
+    'choosing VNPay places the order with paymentMethod and opens the '
+    'payment WebView route',
+    (tester) async {
+      final orderRepository = MockOrderRepository();
+      final addressRepository = MockAddressRepository();
+      final cartRepository = MockCartRepository();
+      when(
+        addressRepository.getAddresses(),
+      ).thenAnswer((_) async => <AddressResponse>[_address()]);
+      when(
+        orderRepository.previewCoupon(any),
+      ).thenAnswer((_) async => _preview());
+      when(
+        orderRepository.placeOrder(any),
+      ).thenAnswer((_) async => _order(paymentMethod: PaymentMethod.vnpay));
+      when(cartRepository.getCart()).thenAnswer((_) async => _cart());
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<CartProvider>.value(
+          value: CartProvider(cartRepository),
+          child: MaterialApp.router(
+            routerConfig: _router(orderRepository, addressRepository),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('VNPay'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Place Order'));
+      await tester.pumpAndSettle();
+
+      final sent =
+          verify(orderRepository.placeOrder(captureAny)).captured.single
+              as PlaceOrderRequest;
+      expect(sent.paymentMethod, PaymentMethod.vnpay);
+      expect(find.text('payment-webview-placeholder'), findsOneWidget);
+      // The flow never shortcuts to order detail before the WebView reports
+      // back — only the payment route is visible so far.
+      expect(find.byType(OrderDetailScreen), findsNothing);
+    },
+  );
 }

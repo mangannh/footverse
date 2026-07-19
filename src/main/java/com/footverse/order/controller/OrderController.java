@@ -16,6 +16,7 @@ import com.footverse.common.dto.ApiResponse;
 import com.footverse.common.dto.PageResponse;
 import com.footverse.order.dto.OrderDetailResponse;
 import com.footverse.order.dto.OrderSummaryResponse;
+import com.footverse.order.dto.PaymentUrlResponse;
 import com.footverse.order.dto.PlaceOrderRequest;
 import com.footverse.order.dto.UpdateOrderStatusRequest;
 import com.footverse.order.service.OrderService;
@@ -30,9 +31,10 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * Order endpoints (dto-spec §20). The customer surface — checkout ({@code POST /orders}), the
- * caller-scoped order queries ({@code GET /orders}, {@code GET /orders/{id}}), and cancellation
- * ({@code POST /orders/{id}/cancel}) — plus the single admin operation, the order-status machine
- * ({@code PATCH /orders/{id}/status}). The
+ * caller-scoped order queries ({@code GET /orders}, {@code GET /orders/{id}}), cancellation
+ * ({@code POST /orders/{id}/cancel}), and the VNPay sandbox payment-URL request
+ * ({@code POST /orders/{id}/payment}, Sprint 13 Task 09) — plus the single admin operation, the
+ * order-status machine ({@code PATCH /orders/{id}/status}). The
  * controller only maps HTTP to the {@link OrderService} and wraps results in the response envelope —
  * it holds no business logic, computes no money, and performs no ownership check. Role authorization
  * is enforced by the security filter chain (security-spec §6 — the customer order paths require
@@ -200,6 +202,47 @@ public class OrderController {
     @PostMapping("/{id}/cancel")
     public ResponseEntity<ApiResponse<OrderDetailResponse>> cancelMyOrder(@PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.ok(orderService.cancelMyOrder(id)));
+    }
+
+    /**
+     * Requests a signed VNPay sandbox payment URL for one of the current customer's orders (Sprint 13
+     * Task 09). Customer only; ownership-checked by the service. Allowed only while the order is
+     * {@code PENDING}, {@code UNPAID}, and {@code paymentMethod = VNPAY}; superseding any existing
+     * pending transaction for the order.
+     *
+     * @param id the order id
+     * @return {@code 200 OK} with the signed payment URL, its transaction reference, and its expiry
+     */
+    @Operation(summary = "Request a signed VNPay sandbox payment URL for one of the current customer's orders")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "The signed payment URL, its transaction reference, and its expiry"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                    description = "VALIDATION_ERROR - id is not a valid number",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class))),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                    description = "UNAUTHORIZED - missing, invalid, or expired access token",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class))),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+                    description = "FORBIDDEN - the caller is not a CUSTOMER; "
+                            + "ORDER_FORBIDDEN - the order belongs to another user",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class))),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "ORDER_NOT_FOUND - no order has this id",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class))),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+                    description = "PAYMENT_NOT_APPLICABLE - the order is not PENDING/UNPAID/VNPAY",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = ApiResponse.class)))
+    })
+    @SecurityRequirement(name = "bearerAuth")
+    @PostMapping("/{id}/payment")
+    public ResponseEntity<ApiResponse<PaymentUrlResponse>> createPaymentUrl(@PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.ok(orderService.createPaymentUrl(id)));
     }
 
     /**

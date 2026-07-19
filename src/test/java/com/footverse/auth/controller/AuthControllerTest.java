@@ -23,9 +23,13 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.footverse.auth.dto.AuthResponse;
+import com.footverse.auth.dto.ForgotPasswordRequest;
 import com.footverse.auth.dto.LoginRequest;
+import com.footverse.auth.dto.PasswordResetTokenResponse;
 import com.footverse.auth.dto.RefreshTokenRequest;
 import com.footverse.auth.dto.RegisterRequest;
+import com.footverse.auth.dto.ResetPasswordRequest;
+import com.footverse.auth.dto.VerifyResetOtpRequest;
 import com.footverse.auth.service.AuthService;
 import com.footverse.common.config.SecurityConfig;
 import com.footverse.common.exception.BusinessException;
@@ -38,9 +42,9 @@ import com.footverse.user.dto.UserResponse;
 import com.footverse.user.entity.Role;
 
 /**
- * Web-slice tests for {@link AuthController} (register, login, refresh, logout). The security
- * filter chain is imported so authentication/authorization behaviour is exercised while the
- * service layer is mocked.
+ * Web-slice tests for {@link AuthController} (register, login, refresh, logout, and the
+ * password-reset flow). The security filter chain is imported so authentication/authorization
+ * behaviour is exercised while the service layer is mocked.
  */
 @WebMvcTest(AuthController.class)
 @Import({SecurityConfig.class, JwtUtil.class, RestAuthenticationEntryPoint.class, RestAccessDeniedHandler.class})
@@ -320,5 +324,140 @@ class AuthControllerTest {
                         .content(objectMapper.writeValueAsString(AuthFixtures.refreshRequest("raw-refresh"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
+    }
+
+    // --- Forgot Password ----------------------------------------------------------------------
+
+    /**
+     * An anonymous forgot-password request (no access token) reaches the service and returns 200
+     * with an empty envelope — the endpoint is public.
+     */
+    @Test
+    void forgotPasswordAnonymousReturns200() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/forgot-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ForgotPasswordRequest("user@example.com"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        verify(authService).forgotPassword(any());
+    }
+
+    /**
+     * A malformed email is rejected with 400 VALIDATION_ERROR before reaching the service.
+     */
+    @Test
+    void forgotPasswordMalformedEmailReturns400() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/forgot-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ForgotPasswordRequest("not-an-email"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+
+        verify(authService, never()).forgotPassword(any());
+    }
+
+    // --- Verify Reset OTP ----------------------------------------------------------------------
+
+    /**
+     * An anonymous verification request reaches the service and returns 200 with the enveloped
+     * {@link PasswordResetTokenResponse}.
+     */
+    @Test
+    void verifyResetOtpAnonymousReturns200WithTokenEnvelope() throws Exception {
+        when(authService.verifyResetOtp(any()))
+                .thenReturn(new PasswordResetTokenResponse("opaque-reset-token", 900L));
+
+        mockMvc.perform(post("/api/v1/auth/verify-reset-otp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new VerifyResetOtpRequest("user@example.com", "123456"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.resetToken").value("opaque-reset-token"))
+                .andExpect(jsonPath("$.data.expiresIn").value(900));
+    }
+
+    /**
+     * A five-digit code is rejected with 400 VALIDATION_ERROR before reaching the service.
+     */
+    @Test
+    void verifyResetOtpFiveDigitCodeReturns400() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/verify-reset-otp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new VerifyResetOtpRequest("user@example.com", "12345"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+
+        verify(authService, never()).verifyResetOtp(any());
+    }
+
+    /**
+     * An invalid code surfaces as the enveloped 400 {@code PASSWORD_RESET_OTP_INVALID} from the
+     * service exception.
+     */
+    @Test
+    void verifyResetOtpWrongCodeReturns400() throws Exception {
+        when(authService.verifyResetOtp(any()))
+                .thenThrow(new BusinessException(HttpStatus.BAD_REQUEST, "PASSWORD_RESET_OTP_INVALID",
+                        "Reset code is invalid"));
+
+        mockMvc.perform(post("/api/v1/auth/verify-reset-otp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new VerifyResetOtpRequest("user@example.com", "123456"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("PASSWORD_RESET_OTP_INVALID"));
+    }
+
+    // --- Reset Password ------------------------------------------------------------------------
+
+    /**
+     * An anonymous reset-password request reaches the service and returns 200 with an empty
+     * envelope.
+     */
+    @Test
+    void resetPasswordAnonymousReturns200() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/reset-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new ResetPasswordRequest("opaque-reset-token", "NewPassword1"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        verify(authService).resetPassword(any());
+    }
+
+    /**
+     * A weak new password is rejected with 400 VALIDATION_ERROR before reaching the service.
+     */
+    @Test
+    void resetPasswordWeakPasswordReturns400() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/reset-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new ResetPasswordRequest("opaque-reset-token", "short"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+
+        verify(authService, never()).resetPassword(any());
+    }
+
+    /**
+     * An invalid or expired reset token surfaces as the enveloped 400
+     * {@code PASSWORD_RESET_TOKEN_INVALID} from the service exception.
+     */
+    @Test
+    void resetPasswordInvalidTokenReturns400() throws Exception {
+        doThrow(new BusinessException(HttpStatus.BAD_REQUEST, "PASSWORD_RESET_TOKEN_INVALID",
+                "Reset token is invalid")).when(authService).resetPassword(any());
+
+        mockMvc.perform(post("/api/v1/auth/reset-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new ResetPasswordRequest("opaque-reset-token", "NewPassword1"))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("PASSWORD_RESET_TOKEN_INVALID"));
     }
 }

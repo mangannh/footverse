@@ -12,4 +12,10 @@ Map<String, dynamic> _$PlaceOrderRequestToJson(PlaceOrderRequest instance) =>
       'addressId': instance.addressId,
       'couponCode': ?instance.couponCode,
       'note': ?instance.note,
+      'paymentMethod': ?_$PaymentMethodEnumMap[instance.paymentMethod],
     };
+
+const _$PaymentMethodEnumMap = {
+  PaymentMethod.cod: 'COD',
+  PaymentMethod.vnpay: 'VNPAY',
+};

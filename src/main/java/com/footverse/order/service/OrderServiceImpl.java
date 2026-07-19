@@ -2,14 +2,22 @@ package com.footverse.order.service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.SortedMap;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -30,16 +38,22 @@ import com.footverse.common.exception.ResourceNotFoundException;
 import com.footverse.common.security.CurrentUserProvider;
 import com.footverse.order.dto.AdminOrderDetailResponse;
 import com.footverse.order.dto.AdminOrderSummaryResponse;
+import com.footverse.order.dto.BestSellingProductResponse;
 import com.footverse.order.dto.CouponPreviewRequest;
 import com.footverse.order.dto.CouponPreviewResponse;
 import com.footverse.order.dto.CouponResponse;
 import com.footverse.order.dto.CreateCouponRequest;
+import com.footverse.order.dto.DashboardResponse;
+import com.footverse.order.dto.MonthlyRevenueResponse;
 import com.footverse.order.dto.OrderDetailResponse;
 import com.footverse.order.dto.OrderItemResponse;
+import com.footverse.order.dto.OrderStatusCountResponse;
 import com.footverse.order.dto.OrderSummaryResponse;
+import com.footverse.order.dto.PaymentUrlResponse;
 import com.footverse.order.dto.PlaceOrderRequest;
 import com.footverse.order.dto.UpdateCouponRequest;
 import com.footverse.order.dto.UpdateOrderStatusRequest;
+import com.footverse.order.dto.VnpayReturnResponse;
 import com.footverse.order.entity.Coupon;
 import com.footverse.order.entity.DiscountType;
 import com.footverse.order.entity.Order;
@@ -47,17 +61,18 @@ import com.footverse.order.entity.OrderItem;
 import com.footverse.order.entity.OrderStatus;
 import com.footverse.order.entity.PaymentMethod;
 import com.footverse.order.entity.PaymentStatus;
+import com.footverse.order.entity.PaymentTransaction;
+import com.footverse.order.entity.PaymentTransactionStatus;
 import com.footverse.order.mapper.CouponMapper;
 import com.footverse.order.mapper.OrderMapper;
 import com.footverse.order.repository.CouponRepository;
 import com.footverse.order.repository.OrderItemRepository;
 import com.footverse.order.repository.OrderRepository;
+import com.footverse.order.repository.PaymentTransactionRepository;
 import com.footverse.product.dto.ProductVariantPurchaseSnapshot;
 import com.footverse.product.dto.ProductVariantResponse;
 import com.footverse.product.service.ProductVariantService;
 import com.footverse.user.entity.User;
-
-import lombok.RequiredArgsConstructor;
 
 /**
  * Default {@link OrderService} implementation. It owns all business logic of the {@code order}
@@ -68,9 +83,16 @@ import lombok.RequiredArgsConstructor;
  * {@link CartService} and each variant's purchase snapshot via {@link ProductVariantService}
  * (architecture-spec §7). The pricing and coupon-validation helpers are the single path checkout
  * (a later task) reuses, so the preview always matches what checkout will persist.</p>
+ *
+ * <p>The VNPay sandbox payment operations (Sprint 13 Task 09) also live here — no
+ * {@code PaymentService} (architecture-spec §20, Design Decision 3). {@link #createPaymentUrl} and
+ * {@link #handleVnpayReturn} are the <strong>only</strong> methods in this class (or the codebase)
+ * allowed to assign {@code PaymentStatus.PAID}, alongside the frozen {@code DELIVERED} side effect in
+ * {@link #applyStatusTransition}. Signing and verifying delegate entirely to the pure, stateless
+ * {@link VnpaySigner}; this class makes no network call and holds no gateway-specific state beyond the
+ * externalized configuration below.</p>
  */
 @Service
-@RequiredArgsConstructor
 public class OrderServiceImpl implements OrderService {
 
     private static final String COUPON_CODE_DUPLICATED_CODE = "COUPON_CODE_DUPLICATED";
@@ -98,9 +120,33 @@ public class OrderServiceImpl implements OrderService {
     private static final String ORDER_NOT_CANCELLABLE_MESSAGE = "Order can only be cancelled while PENDING";
     private static final String ORDER_INVALID_STATUS_TRANSITION_CODE = "ORDER_INVALID_STATUS_TRANSITION";
     private static final String ORDER_INVALID_STATUS_TRANSITION_MESSAGE = "Order status transition is not allowed";
+    private static final String PAYMENT_NOT_APPLICABLE_CODE = "PAYMENT_NOT_APPLICABLE";
+    private static final String PAYMENT_NOT_APPLICABLE_MESSAGE = "Payment is not applicable for this order";
+    private static final String PAYMENT_TRANSACTION_NOT_FOUND_CODE = "PAYMENT_TRANSACTION_NOT_FOUND";
+    private static final String PAYMENT_TRANSACTION_NOT_FOUND_MESSAGE = "Payment transaction not found";
+    private static final String PAYMENT_SIGNATURE_INVALID_CODE = "PAYMENT_SIGNATURE_INVALID";
+    private static final String PAYMENT_SIGNATURE_INVALID_MESSAGE = "Payment signature is invalid";
+    private static final String PAYMENT_AMOUNT_MISMATCH_CODE = "PAYMENT_AMOUNT_MISMATCH";
+    private static final String PAYMENT_AMOUNT_MISMATCH_MESSAGE = "Payment amount does not match the order";
 
     /** Field the order-history list is always sorted by, most-recent-first (assumption 3). */
     private static final String ORDER_HISTORY_SORT_FIELD = "createdAt";
+
+    /** Number of most-recently-placed orders the dashboard's {@code recentOrders} carries (Sprint 13). */
+    private static final int DASHBOARD_RECENT_ORDERS_LIMIT = 5;
+
+    /**
+     * Number of top-selling variants the dashboard fetches before folding to product level — larger
+     * than the final top-5 so two variants of one product merging into a single row cannot push a
+     * genuinely popular product out of the ranking (Design Decision 10, Sprint 13).
+     */
+    private static final int DASHBOARD_BEST_SELLER_FETCH_LIMIT = 50;
+
+    /** Number of best-selling products the dashboard exposes after folding (Sprint 13). */
+    private static final int DASHBOARD_BEST_SELLER_TOP_N = 5;
+
+    /** Number of trailing months, including the current one, the dashboard's revenue series covers. */
+    private static final int DASHBOARD_MONTHLY_REVENUE_WINDOW_MONTHS = 12;
 
     /** Flat shipping fee applied to every order (business-rules → Order; sprint-4-plan assumption 5). */
     private static final BigDecimal SHIPPING_FEE = new BigDecimal("30000.00");
@@ -117,6 +163,52 @@ public class OrderServiceImpl implements OrderService {
      */
     private static final int ORDER_CODE_MAX_ATTEMPTS = 5;
 
+    /**
+     * Transaction reference prefix and second-precision timestamp pattern (mirrors the order-code
+     * strategy's simplicity, sprint-13-plan Task 08 Design Notes — no {@code TxnRefGenerator} class).
+     */
+    private static final String TXN_REF_PREFIX = "VNP-";
+    private static final DateTimeFormatter TXN_REF_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
+
+    /** VNPay's own gateway/provider identifier, stored on every {@link PaymentTransaction}. */
+    private static final String VNPAY_PROVIDER = "VNPAY";
+
+    /** VNPay's documented multiplier: amounts travel as the smallest currency unit × 100. */
+    private static final BigDecimal VNPAY_AMOUNT_MULTIPLIER = new BigDecimal("100");
+
+    /** VNPay's fixed order-type category for a generic e-commerce purchase. */
+    private static final String VNPAY_ORDER_TYPE = "other";
+
+    /** VNPay's documented response code for a successful payment. */
+    private static final String VNPAY_SUCCESS_RESPONSE_CODE = "00";
+
+    /**
+     * The sandbox caller IP recorded on every payment request. {@link #createPaymentUrl(Long)} takes
+     * only an order id (sprint-13-plan Task 09) and this is a sandbox-only integration with no
+     * production traffic (Assumption 5), so no real client IP is threaded through the service layer
+     * for it — VNPay's sandbox does not validate this field.
+     */
+    private static final String VNPAY_SANDBOX_IP = "127.0.0.1";
+
+    private static final DateTimeFormatter VNPAY_DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+
+    private static final String VNP_AMOUNT = "vnp_Amount";
+    private static final String VNP_COMMAND = "vnp_Command";
+    private static final String VNP_CREATE_DATE = "vnp_CreateDate";
+    private static final String VNP_CURR_CODE = "vnp_CurrCode";
+    private static final String VNP_EXPIRE_DATE = "vnp_ExpireDate";
+    private static final String VNP_IP_ADDR = "vnp_IpAddr";
+    private static final String VNP_LOCALE = "vnp_Locale";
+    private static final String VNP_ORDER_INFO = "vnp_OrderInfo";
+    private static final String VNP_ORDER_TYPE = "vnp_OrderType";
+    private static final String VNP_RESPONSE_CODE = "vnp_ResponseCode";
+    private static final String VNP_RETURN_URL = "vnp_ReturnUrl";
+    private static final String VNP_SECURE_HASH = "vnp_SecureHash";
+    private static final String VNP_TMN_CODE = "vnp_TmnCode";
+    private static final String VNP_TRANSACTION_NO = "vnp_TransactionNo";
+    private static final String VNP_TXN_REF = "vnp_TxnRef";
+    private static final String VNP_VERSION = "vnp_Version";
+
     private final CouponRepository couponRepository;
     private final CouponMapper couponMapper;
     private final CartService cartService;
@@ -126,6 +218,79 @@ public class OrderServiceImpl implements OrderService {
     private final OrderItemRepository orderItemRepository;
     private final OrderMapper orderMapper;
     private final CurrentUserProvider currentUserProvider;
+    private final PaymentTransactionRepository paymentTransactionRepository;
+    private final String vnpayTmnCode;
+    private final String vnpayHashSecret;
+    private final String vnpayPayUrl;
+    private final String vnpayReturnUrl;
+    private final String vnpayVersion;
+    private final String vnpayCommand;
+    private final String vnpayCurrency;
+    private final String vnpayLocale;
+    private final long vnpayExpireMinutes;
+
+    /**
+     * Creates the service.
+     *
+     * @param couponRepository              the coupon store
+     * @param couponMapper                  the coupon entity/DTO mapper
+     * @param cartService                   the cart-module facade (checkout line resolution)
+     * @param productVariantService         the product-module facade (stock and purchase snapshots)
+     * @param addressService                the address-module facade (shipping snapshot resolution)
+     * @param orderRepository               the order store
+     * @param orderItemRepository           the order-line store
+     * @param orderMapper                   the order entity/DTO mapper
+     * @param currentUserProvider           the authenticated-user access point (ownership checks)
+     * @param paymentTransactionRepository  the payment-transaction store (Sprint 13 Task 09)
+     * @param vnpayTmnCode                  the VNPay sandbox merchant terminal code
+     * @param vnpayHashSecret               the VNPay sandbox hash secret ({@link VnpaySigner})
+     * @param vnpayPayUrl                   the VNPay sandbox payment page base URL
+     * @param vnpayReturnUrl                the configured return URL the gateway redirects to
+     * @param vnpayVersion                  the VNPay API version (e.g. {@code 2.1.0})
+     * @param vnpayCommand                  the VNPay command (e.g. {@code pay})
+     * @param vnpayCurrency                 the VNPay currency code (e.g. {@code VND})
+     * @param vnpayLocale                   the VNPay UI locale (e.g. {@code vn})
+     * @param vnpayExpireMinutes            the payment-URL validity window in minutes
+     */
+    public OrderServiceImpl(CouponRepository couponRepository,
+                            CouponMapper couponMapper,
+                            CartService cartService,
+                            ProductVariantService productVariantService,
+                            AddressService addressService,
+                            OrderRepository orderRepository,
+                            OrderItemRepository orderItemRepository,
+                            OrderMapper orderMapper,
+                            CurrentUserProvider currentUserProvider,
+                            PaymentTransactionRepository paymentTransactionRepository,
+                            @Value("${footverse.vnpay.tmn-code}") String vnpayTmnCode,
+                            @Value("${footverse.vnpay.hash-secret}") String vnpayHashSecret,
+                            @Value("${footverse.vnpay.pay-url}") String vnpayPayUrl,
+                            @Value("${footverse.vnpay.return-url}") String vnpayReturnUrl,
+                            @Value("${footverse.vnpay.version}") String vnpayVersion,
+                            @Value("${footverse.vnpay.command}") String vnpayCommand,
+                            @Value("${footverse.vnpay.currency}") String vnpayCurrency,
+                            @Value("${footverse.vnpay.locale}") String vnpayLocale,
+                            @Value("${footverse.vnpay.expire-minutes}") long vnpayExpireMinutes) {
+        this.couponRepository = couponRepository;
+        this.couponMapper = couponMapper;
+        this.cartService = cartService;
+        this.productVariantService = productVariantService;
+        this.addressService = addressService;
+        this.orderRepository = orderRepository;
+        this.orderItemRepository = orderItemRepository;
+        this.orderMapper = orderMapper;
+        this.currentUserProvider = currentUserProvider;
+        this.paymentTransactionRepository = paymentTransactionRepository;
+        this.vnpayTmnCode = vnpayTmnCode;
+        this.vnpayHashSecret = vnpayHashSecret;
+        this.vnpayPayUrl = vnpayPayUrl;
+        this.vnpayReturnUrl = vnpayReturnUrl;
+        this.vnpayVersion = vnpayVersion;
+        this.vnpayCommand = vnpayCommand;
+        this.vnpayCurrency = vnpayCurrency;
+        this.vnpayLocale = vnpayLocale;
+        this.vnpayExpireMinutes = vnpayExpireMinutes;
+    }
 
     @Override
     @Transactional(readOnly = true)
@@ -274,6 +439,95 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     @Transactional
+    public PaymentUrlResponse createPaymentUrl(Long orderId) {
+        Long userId = currentUserProvider.getCurrentUser().getId();
+        Order order = orderRepository.findByIdAndUserId(orderId, userId)
+                .orElseThrow(() -> unresolvableOrder(orderId));
+        if (order.getStatus() != OrderStatus.PENDING
+                || order.getPaymentStatus() != PaymentStatus.UNPAID
+                || order.getPaymentMethod() != PaymentMethod.VNPAY) {
+            throw new BusinessException(HttpStatus.CONFLICT,
+                    PAYMENT_NOT_APPLICABLE_CODE, PAYMENT_NOT_APPLICABLE_MESSAGE);
+        }
+
+        // Supersede rather than reuse: any existing PENDING transaction for this order is a retry
+        // being abandoned, marked FAILED so the attempt history stays complete and its txnRef can
+        // never later be redeemed (database-spec §10.17, sprint-13-plan Task 08 Design Decision 7).
+        paymentTransactionRepository
+                .findFirstByOrderIdAndStatusOrderByIdDesc(order.getId(), PaymentTransactionStatus.PENDING)
+                .ifPresent(existing -> {
+                    existing.setStatus(PaymentTransactionStatus.FAILED);
+                    paymentTransactionRepository.save(existing);
+                });
+
+        String txnRef = newTxnRef();
+        PaymentTransaction transaction = new PaymentTransaction();
+        transaction.setOrder(order);
+        transaction.setTxnRef(txnRef);
+        transaction.setProvider(VNPAY_PROVIDER);
+        transaction.setAmount(order.getTotal());
+        transaction.setStatus(PaymentTransactionStatus.PENDING);
+        paymentTransactionRepository.save(transaction);
+
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime expiresAt = now.plusMinutes(vnpayExpireMinutes);
+        SortedMap<String, String> params = buildVnpayPaymentParams(order, txnRef, now, expiresAt);
+        String secureHash = VnpaySigner.sign(params, vnpayHashSecret);
+        String paymentUrl = vnpayPayUrl + "?" + toQueryString(params) + "&" + VNP_SECURE_HASH + "=" + secureHash;
+
+        return new PaymentUrlResponse(paymentUrl, txnRef, expiresAt);
+    }
+
+    @Override
+    @Transactional
+    public VnpayReturnResponse handleVnpayReturn(Map<String, String> params) {
+        // Step 1 — verify the signature before reading any other field (Design Decision 6). Every
+        // field below is attacker-controlled until this check passes.
+        if (!VnpaySigner.verify(params, vnpayHashSecret)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST,
+                    PAYMENT_SIGNATURE_INVALID_CODE, PAYMENT_SIGNATURE_INVALID_MESSAGE);
+        }
+
+        // Step 2 — resolve the transaction by its reference.
+        PaymentTransaction transaction = paymentTransactionRepository.findByTxnRef(params.get(VNP_TXN_REF))
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND,
+                        PAYMENT_TRANSACTION_NOT_FOUND_CODE, PAYMENT_TRANSACTION_NOT_FOUND_MESSAGE));
+
+        // Step 6 — replay: a transaction already resolved (SUCCESS or FAILED) writes nothing further
+        // and returns the same response, making this handler safe to call twice.
+        if (transaction.getStatus() != PaymentTransactionStatus.PENDING) {
+            return toReturnResponse(transaction);
+        }
+
+        // Step 3 — re-check the amount server-side even though the signature already passed.
+        BigDecimal returnedAmount = parseVnpayAmount(params.get(VNP_AMOUNT));
+        if (returnedAmount == null || returnedAmount.compareTo(transaction.getAmount()) != 0) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST,
+                    PAYMENT_AMOUNT_MISMATCH_CODE, PAYMENT_AMOUNT_MISMATCH_MESSAGE);
+        }
+
+        String responseCode = params.get(VNP_RESPONSE_CODE);
+        transaction.setResponseCode(responseCode);
+        if (VNPAY_SUCCESS_RESPONSE_CODE.equals(responseCode)) {
+            // Step 4 — success: the transaction and the order are the only two writes, both inside
+            // this one transaction.
+            transaction.setStatus(PaymentTransactionStatus.SUCCESS);
+            transaction.setProviderTxnNo(params.get(VNP_TRANSACTION_NO));
+            transaction.setPaidAt(LocalDateTime.now());
+            paymentTransactionRepository.save(transaction);
+            Order order = transaction.getOrder();
+            order.setPaymentStatus(PaymentStatus.PAID);
+            orderRepository.save(order);
+        } else {
+            // Step 5 — failure: only the transaction changes; the order is left exactly as it was.
+            transaction.setStatus(PaymentTransactionStatus.FAILED);
+            paymentTransactionRepository.save(transaction);
+        }
+        return toReturnResponse(transaction);
+    }
+
+    @Override
+    @Transactional
     public OrderDetailResponse updateOrderStatus(Long id, UpdateOrderStatusRequest request) {
         // Admin operation — ownership is bypassed (security-spec §7); resolve by id alone.
         Order order = orderRepository.findById(id)
@@ -303,6 +557,26 @@ public class OrderServiceImpl implements OrderService {
                 .orElseThrow(() -> new ResourceNotFoundException(ORDER_NOT_FOUND_CODE, ORDER_NOT_FOUND_MESSAGE));
         List<OrderItemResponse> items = toItemResponses(orderItemRepository.findByOrderId(order.getId()));
         return orderMapper.toAdminDetailResponse(order, items);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public DashboardResponse getDashboard() {
+        BigDecimal totalRevenue = orderRepository.sumTotalForDeliveredOrders();
+        long totalOrders = orderRepository.count();
+        OrderRepository.ProfitSummaryProjection profit = orderRepository.findDeliveredOrderItemProfitSummary();
+        List<OrderStatusCountResponse> ordersByStatus =
+                zeroFillStatusCounts(orderRepository.countOrdersGroupedByStatus());
+        List<MonthlyRevenueResponse> monthlyRevenue = zeroFillMonthlyRevenue(
+                orderRepository.findMonthlyDeliveredRevenueSince(monthlyRevenueWindowStart()));
+        List<BestSellingProductResponse> bestSellingProducts = foldToBestSellingProducts(
+                orderRepository.findTopSellingDeliveredVariants(
+                        PageRequest.of(0, DASHBOARD_BEST_SELLER_FETCH_LIMIT)));
+        List<AdminOrderSummaryResponse> recentOrders = recentOrders();
+
+        return new DashboardResponse(totalRevenue, totalOrders, profit.getGrossProfit(),
+                profit.getLinesWithCost(), profit.getLinesTotal(), ordersByStatus, monthlyRevenue,
+                bestSellingProducts, recentOrders);
     }
 
     /**
@@ -367,6 +641,10 @@ public class OrderServiceImpl implements OrderService {
      * untouched at {@code UNPAID} (business-rules → Cancellation). The caller has already verified the
      * order is {@code PENDING}; this method never reads the status again.
      *
+     * <p>Sprint 13 Task 09: a {@code PENDING} {@link PaymentTransaction} for the order, if any, is
+     * marked {@code FAILED} — an abandoned VNPay attempt must not be redeemable after its order is
+     * cancelled. This never touches the order's {@code paymentStatus}, which stays {@code UNPAID}.</p>
+     *
      * <p>The whole compensation shares the caller's {@code @Transactional} boundary, so a failure of
      * the stock restore or the coupon update rolls the status change back with it — no partial state
      * (stock restored but order not cancelled, or coupon rolled back but stock not) can persist.</p>
@@ -384,6 +662,12 @@ public class OrderServiceImpl implements OrderService {
             coupon.setUsedCount(Math.max(0, coupon.getUsedCount() - 1));
             couponRepository.save(coupon);
         }
+        paymentTransactionRepository
+                .findFirstByOrderIdAndStatusOrderByIdDesc(order.getId(), PaymentTransactionStatus.PENDING)
+                .ifPresent(pending -> {
+                    pending.setStatus(PaymentTransactionStatus.FAILED);
+                    paymentTransactionRepository.save(pending);
+                });
     }
 
     /**
@@ -432,6 +716,116 @@ public class OrderServiceImpl implements OrderService {
         return orderItemRepository.findByOrderIdIn(orderIds).stream()
                 .collect(Collectors.groupingBy(item -> item.getOrder().getId(),
                         Collectors.summingInt(OrderItem::getQuantity)));
+    }
+
+    /**
+     * Returns the dashboard's five most-recently-placed orders as {@link AdminOrderSummaryResponse}
+     * (Sprint 13 Task 01, Design Decision 1) — the same DTO and the same {@link #itemCountsByOrder}
+     * aggregation {@link #adminListOrders(OrderStatus, String, Pageable)} already uses; no
+     * near-duplicate row type is created.
+     *
+     * @return up to five most-recent orders, newest first
+     */
+    private List<AdminOrderSummaryResponse> recentOrders() {
+        Pageable pageable =
+                PageRequest.of(0, DASHBOARD_RECENT_ORDERS_LIMIT, Sort.by(Sort.Direction.DESC, ORDER_HISTORY_SORT_FIELD));
+        List<Order> orders = orderRepository.findAll(pageable).getContent();
+        Map<Long, Integer> itemCounts = itemCountsByOrder(orders);
+        return orders.stream()
+                .map(order -> orderMapper.toAdminSummaryResponse(order, itemCounts.getOrDefault(order.getId(), 0)))
+                .toList();
+    }
+
+    /**
+     * Zero-fills the dashboard's per-status order count to a full five-row set, one per
+     * {@link OrderStatus} value, in declaration order (Sprint 13 Task 01 Design Notes): the
+     * repository returns a row only for a status that has at least one order, and this method
+     * supplies {@code 0} for every status that has none — the query itself cannot invent rows for
+     * statuses it never saw.
+     *
+     * @param rows the repository's per-status counts (absent for a status with no orders)
+     * @return exactly five rows, one per {@link OrderStatus} value
+     */
+    private List<OrderStatusCountResponse> zeroFillStatusCounts(List<OrderRepository.StatusCountProjection> rows) {
+        Map<OrderStatus, Long> counts = new EnumMap<>(OrderStatus.class);
+        for (OrderRepository.StatusCountProjection row : rows) {
+            counts.put(row.getStatus(), row.getCount());
+        }
+        List<OrderStatusCountResponse> zeroFilled = new ArrayList<>();
+        for (OrderStatus status : OrderStatus.values()) {
+            zeroFilled.add(new OrderStatusCountResponse(status, counts.getOrDefault(status, 0L)));
+        }
+        return zeroFilled;
+    }
+
+    /**
+     * The inclusive start of the dashboard's trailing twelve-month window: the first instant of the
+     * month that is eleven months before the current one, so the window covers exactly the current
+     * month and the eleven before it (Sprint 13 Task 01).
+     *
+     * @return the window's start instant
+     */
+    private LocalDateTime monthlyRevenueWindowStart() {
+        return YearMonth.now().minusMonths(DASHBOARD_MONTHLY_REVENUE_WINDOW_MONTHS - 1L).atDay(1).atStartOfDay();
+    }
+
+    /**
+     * Zero-fills the dashboard's monthly revenue series to a full twelve-row trailing window, oldest
+     * first (Sprint 13 Task 01 Design Notes): the repository returns a row only for a month that had
+     * at least one {@code DELIVERED} order, and this method supplies zero revenue and a zero order
+     * count for every month that had none.
+     *
+     * @param rows the repository's per-month revenue (absent for a month with no delivered orders)
+     * @return exactly twelve rows, the current month and the eleven before it, oldest first
+     */
+    private List<MonthlyRevenueResponse> zeroFillMonthlyRevenue(List<OrderRepository.MonthlyRevenueProjection> rows) {
+        Map<YearMonth, OrderRepository.MonthlyRevenueProjection> byMonth = new LinkedHashMap<>();
+        for (OrderRepository.MonthlyRevenueProjection row : rows) {
+            byMonth.put(YearMonth.of(row.getYear(), row.getMonth()), row);
+        }
+        YearMonth currentMonth = YearMonth.now();
+        List<MonthlyRevenueResponse> zeroFilled = new ArrayList<>();
+        for (int monthsAgo = DASHBOARD_MONTHLY_REVENUE_WINDOW_MONTHS - 1; monthsAgo >= 0; monthsAgo--) {
+            YearMonth yearMonth = currentMonth.minusMonths(monthsAgo);
+            OrderRepository.MonthlyRevenueProjection row = byMonth.get(yearMonth);
+            BigDecimal revenue = row == null ? BigDecimal.ZERO : row.getRevenue();
+            int orderCount = row == null ? 0 : Math.toIntExact(row.getOrderCount());
+            zeroFilled.add(new MonthlyRevenueResponse(yearMonth.getYear(), yearMonth.getMonthValue(), revenue,
+                    orderCount));
+        }
+        return zeroFilled;
+    }
+
+    /**
+     * Folds the dashboard's per-variant sales up to product level (Sprint 13 Task 01, Design
+     * Decision 10): an order item stores only {@code productVariantId} (database-spec §12), so each
+     * variant row is resolved to its owning product through
+     * {@link ProductVariantService#getPurchaseSnapshot(Long)} — the only edge architecture-spec §7
+     * permits from {@code OrderService} into the product module — before quantities and revenue are
+     * summed per product. Grouping by the snapshotted product name instead would be wrong: a renamed
+     * product would split into two rows, and two products that once shared a name would merge into
+     * one. The result is sorted by total quantity sold, descending, and capped at
+     * {@link #DASHBOARD_BEST_SELLER_TOP_N}.
+     *
+     * @param variantSales the top variants by quantity sold, most first (over-fetched beyond the
+     *                      final top-N so folding two variants of one product cannot drop it out)
+     * @return up to {@link #DASHBOARD_BEST_SELLER_TOP_N} products, ordered by quantity sold descending
+     */
+    private List<BestSellingProductResponse> foldToBestSellingProducts(
+            List<OrderRepository.VariantSalesProjection> variantSales) {
+        Map<Long, FoldedProductSales> byProduct = new LinkedHashMap<>();
+        for (OrderRepository.VariantSalesProjection row : variantSales) {
+            ProductVariantPurchaseSnapshot snapshot =
+                    productVariantService.getPurchaseSnapshot(row.getProductVariantId());
+            FoldedProductSales folded = byProduct.computeIfAbsent(snapshot.productId(),
+                    id -> new FoldedProductSales(id, snapshot.productName(), snapshot.primaryImageUrl()));
+            folded.add(row.getQuantitySold(), row.getRevenue());
+        }
+        return byProduct.values().stream()
+                .sorted(Comparator.comparingLong(FoldedProductSales::quantitySold).reversed())
+                .limit(DASHBOARD_BEST_SELLER_TOP_N)
+                .map(FoldedProductSales::toResponse)
+                .toList();
     }
 
     /**
@@ -529,12 +923,12 @@ public class OrderServiceImpl implements OrderService {
 
     /**
      * Assembles the {@link Order} aggregate from the checkout inputs: the customer, the applied coupon
-     * (or {@code null}), the initial {@code PENDING}/{@code COD}/{@code UNPAID} state, the money
-     * snapshot, the shipping snapshot copied from the resolved address, and the optional note. The
-     * order code is stamped later by {@link #saveOrderWithUniqueCode(Order)}; the order is not yet
-     * persisted.
+     * (or {@code null}), the initial {@code PENDING}/{@code UNPAID} state, the requested payment
+     * method (or {@code COD} when absent — Sprint 13 Task 08, Design Decision 8), the money snapshot,
+     * the shipping snapshot copied from the resolved address, and the optional note. The order code is
+     * stamped later by {@link #saveOrderWithUniqueCode(Order)}; the order is not yet persisted.
      *
-     * @param request  the checkout request (for the note)
+     * @param request  the checkout request (for the note and the optional payment method)
      * @param customer the acting customer
      * @param address  the resolved shipping address to snapshot
      * @param pricing  the computed pricing to snapshot
@@ -545,7 +939,7 @@ public class OrderServiceImpl implements OrderService {
         order.setUser(customer);
         order.setCoupon(pricing.coupon());
         order.setStatus(OrderStatus.PENDING);
-        order.setPaymentMethod(PaymentMethod.COD);
+        order.setPaymentMethod(request.paymentMethod() != null ? request.paymentMethod() : PaymentMethod.COD);
         order.setPaymentStatus(PaymentStatus.UNPAID);
         order.setSubtotal(pricing.subtotal());
         order.setDiscountAmount(pricing.discountAmount());
@@ -639,6 +1033,117 @@ public class OrderServiceImpl implements OrderService {
      */
     private String newOrderCode() {
         return ORDER_CODE_PREFIX + LocalDateTime.now().format(ORDER_CODE_FORMATTER);
+    }
+
+    /**
+     * Builds a timestamp transaction reference {@code VNP-yyyyMMddHHmmssSSS} (sprint-13-plan Task 08
+     * Design Notes — mirrors {@link #newOrderCode()}'s simplicity; no {@code TxnRefGenerator} class).
+     * {@code txn_ref} carries its own unique constraint (database-spec §10.17), the ultimate
+     * uniqueness authority, exactly as the order-code strategy relies on its own constraint.
+     *
+     * @return a candidate transaction reference
+     */
+    private String newTxnRef() {
+        return TXN_REF_PREFIX + LocalDateTime.now().format(TXN_REF_FORMATTER);
+    }
+
+    /**
+     * Builds the full set of VNPay {@code pay} command parameters for a payment request, signed by
+     * the caller with {@link VnpaySigner#sign}. Sorted by key so both the signed hash and the
+     * returned query string are built from the same canonical order.
+     *
+     * @param order     the order being paid for
+     * @param txnRef    the newly generated transaction reference
+     * @param now       the request timestamp
+     * @param expiresAt when the payment URL expires
+     * @return the sorted parameter map, ready to sign
+     */
+    private SortedMap<String, String> buildVnpayPaymentParams(
+            Order order, String txnRef, LocalDateTime now, LocalDateTime expiresAt) {
+        SortedMap<String, String> params = new TreeMap<>();
+        params.put(VNP_VERSION, vnpayVersion);
+        params.put(VNP_COMMAND, vnpayCommand);
+        params.put(VNP_TMN_CODE, vnpayTmnCode);
+        params.put(VNP_AMOUNT, toVnpayAmount(order.getTotal()));
+        params.put(VNP_CURR_CODE, vnpayCurrency);
+        params.put(VNP_TXN_REF, txnRef);
+        params.put(VNP_ORDER_INFO, "Thanh toan don hang " + order.getOrderCode());
+        params.put(VNP_ORDER_TYPE, VNPAY_ORDER_TYPE);
+        params.put(VNP_LOCALE, vnpayLocale);
+        params.put(VNP_RETURN_URL, vnpayReturnUrl);
+        params.put(VNP_IP_ADDR, VNPAY_SANDBOX_IP);
+        params.put(VNP_CREATE_DATE, now.format(VNPAY_DATE_FORMATTER));
+        params.put(VNP_EXPIRE_DATE, expiresAt.format(VNPAY_DATE_FORMATTER));
+        return params;
+    }
+
+    /**
+     * Joins already-sorted parameters into a URL query string, each value URL-encoded — the same
+     * encoding {@link VnpaySigner} applies when computing the hash, so the returned payment URL's
+     * query string is exactly what was signed.
+     *
+     * @param params the sorted, non-empty-valued parameters
+     * @return the joined {@code key=value&key=value} query string, without a leading {@code ?}
+     */
+    private String toQueryString(SortedMap<String, String> params) {
+        StringBuilder query = new StringBuilder();
+        boolean first = true;
+        for (Map.Entry<String, String> entry : params.entrySet()) {
+            if (!first) {
+                query.append('&');
+            }
+            query.append(entry.getKey()).append('=')
+                    .append(URLEncoder.encode(entry.getValue(), StandardCharsets.US_ASCII));
+            first = false;
+        }
+        return query.toString();
+    }
+
+    /**
+     * Converts a money amount to VNPay's wire format: the smallest currency unit, i.e. the amount
+     * multiplied by 100, with no decimal point (VNPay's documented convention).
+     *
+     * @param amount the order's exact money amount
+     * @return the VNPay-formatted integer amount string
+     */
+    private String toVnpayAmount(BigDecimal amount) {
+        return amount.multiply(VNPAY_AMOUNT_MULTIPLIER).setScale(0, RoundingMode.UNNECESSARY).toPlainString();
+    }
+
+    /**
+     * Parses a returned {@code vnp_Amount} back into a money amount (the inverse of
+     * {@link #toVnpayAmount(BigDecimal)}), so it can be compared against the stored transaction
+     * amount.
+     *
+     * @param vnpAmount the gateway's returned amount string, or {@code null}
+     * @return the parsed amount, or {@code null} when absent or not a clean multiple of 100 —
+     *         treated as a mismatch by the caller, never as a match
+     */
+    private BigDecimal parseVnpayAmount(String vnpAmount) {
+        if (vnpAmount == null) {
+            return null;
+        }
+        try {
+            return new BigDecimal(vnpAmount).divide(VNPAY_AMOUNT_MULTIPLIER, MONEY_SCALE, RoundingMode.UNNECESSARY);
+        } catch (NumberFormatException | ArithmeticException malformed) {
+            return null;
+        }
+    }
+
+    /**
+     * Builds the caller-facing result of a resolved (non-{@code PENDING}) transaction — used both for
+     * a freshly processed return and for a replay, so the two paths return byte-for-byte the same
+     * shape from the same stored fields.
+     *
+     * @param transaction the resolved (SUCCESS or FAILED) transaction
+     * @return the payment outcome for the transaction's order
+     */
+    private VnpayReturnResponse toReturnResponse(PaymentTransaction transaction) {
+        Order order = transaction.getOrder();
+        boolean success = transaction.getStatus() == PaymentTransactionStatus.SUCCESS;
+        String message = success ? "Payment successful" : "Payment failed";
+        return new VnpayReturnResponse(
+                order.getId(), order.getOrderCode(), success, transaction.getResponseCode(), message);
     }
 
     /**
@@ -754,5 +1259,52 @@ public class OrderServiceImpl implements OrderService {
      * @param total          {@code subtotal − discountAmount + shippingFee}
      */
     private record Pricing(Coupon coupon, BigDecimal subtotal, BigDecimal discountAmount, BigDecimal total) {
+    }
+
+    /**
+     * Mutable running total for one product while folding the dashboard's per-variant best-seller
+     * rows (Sprint 13 Task 01, Design Decision 10). Internal to
+     * {@link #foldToBestSellingProducts(List)}; a record cannot accumulate across the several variant
+     * rows that may belong to the same product, so this small holder does.
+     */
+    private static final class FoldedProductSales {
+
+        private final Long productId;
+        private final String productName;
+        private final String productImageUrl;
+        private long quantitySold;
+        private BigDecimal revenue = BigDecimal.ZERO;
+
+        private FoldedProductSales(Long productId, String productName, String productImageUrl) {
+            this.productId = productId;
+            this.productName = productName;
+            this.productImageUrl = productImageUrl;
+        }
+
+        /**
+         * Adds one variant's contribution to this product's running total.
+         *
+         * @param quantity      the variant's units sold to add
+         * @param lineRevenue   the variant's revenue to add
+         */
+        private void add(long quantity, BigDecimal lineRevenue) {
+            quantitySold += quantity;
+            revenue = revenue.add(lineRevenue);
+        }
+
+        /**
+         * @return the running total of units sold across every folded variant
+         */
+        private long quantitySold() {
+            return quantitySold;
+        }
+
+        /**
+         * @return the finished response row for this product
+         */
+        private BestSellingProductResponse toResponse() {
+            return new BestSellingProductResponse(productId, productName, productImageUrl,
+                    Math.toIntExact(quantitySold), revenue);
+        }
     }
 }

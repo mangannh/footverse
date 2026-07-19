@@ -12,13 +12,20 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.footverse.auth.dto.AuthResponse;
+import com.footverse.auth.dto.ForgotPasswordRequest;
 import com.footverse.auth.dto.LoginRequest;
+import com.footverse.auth.dto.PasswordResetTokenResponse;
 import com.footverse.auth.dto.RefreshTokenRequest;
 import com.footverse.auth.dto.RegisterRequest;
+import com.footverse.auth.dto.ResetPasswordRequest;
+import com.footverse.auth.dto.VerifyResetOtpRequest;
+import com.footverse.auth.entity.PasswordResetToken;
 import com.footverse.auth.entity.RefreshToken;
+import com.footverse.auth.repository.PasswordResetTokenRepository;
 import com.footverse.auth.repository.RefreshTokenRepository;
 import com.footverse.common.exception.BusinessException;
 import com.footverse.common.exception.DuplicateResourceException;
+import com.footverse.common.mail.EmailSender;
 import com.footverse.common.security.CurrentUserProvider;
 import com.footverse.common.security.JwtUtil;
 import com.footverse.common.util.TokenHasher;
@@ -35,11 +42,21 @@ import com.footverse.user.service.UserService;
  * token following the canonical 12-step flow (security-spec §2): the old row is deleted and a
  * new access/refresh pair issued. Logout revokes the presented refresh token after an ownership
  * check via {@link CurrentUserProvider}, and is idempotent.
+ *
+ * <p>The standard four-step password-reset flow (Sprint 13 Task 05) also lives here rather than in
+ * a separate {@code PasswordResetService}: {@link #forgotPassword} never reveals whether an email
+ * is registered, {@link #verifyResetOtp} exchanges a correct one-time code for a short-lived opaque
+ * reset token, and {@link #resetPassword} consumes that token and revokes every refresh token the
+ * account holds. The one {@link PasswordResetToken} row per account carries the whole attempt —
+ * OTP hash, then reset-token hash — through both steps.</p>
  */
 @Service
 public class AuthServiceImpl implements AuthService {
 
     private static final int REFRESH_TOKEN_BYTES = 32;
+    private static final int RESET_TOKEN_BYTES = 32;
+    private static final int OTP_BOUND = 1_000_000;
+    private static final String OTP_FORMAT = "%06d";
     private static final String TOKEN_TYPE = "Bearer";
     private static final String INVALID_CREDENTIALS_CODE = "INVALID_CREDENTIALS";
     private static final String INVALID_CREDENTIALS_MESSAGE = "Invalid email or password";
@@ -51,46 +68,77 @@ public class AuthServiceImpl implements AuthService {
     private static final String REFRESH_TOKEN_EXPIRED_MESSAGE = "Refresh token has expired";
     private static final String REFRESH_TOKEN_FORBIDDEN_CODE = "REFRESH_TOKEN_FORBIDDEN";
     private static final String REFRESH_TOKEN_FORBIDDEN_MESSAGE = "You cannot revoke this refresh token";
+    private static final String PASSWORD_RESET_OTP_INVALID_CODE = "PASSWORD_RESET_OTP_INVALID";
+    private static final String PASSWORD_RESET_OTP_INVALID_MESSAGE = "Reset code is invalid";
+    private static final String PASSWORD_RESET_OTP_EXPIRED_CODE = "PASSWORD_RESET_OTP_EXPIRED";
+    private static final String PASSWORD_RESET_OTP_EXPIRED_MESSAGE = "Reset code has expired";
+    private static final String PASSWORD_RESET_TOKEN_INVALID_CODE = "PASSWORD_RESET_TOKEN_INVALID";
+    private static final String PASSWORD_RESET_TOKEN_INVALID_MESSAGE = "Reset token is invalid";
+    private static final String PASSWORD_RESET_TOKEN_EXPIRED_CODE = "PASSWORD_RESET_TOKEN_EXPIRED";
+    private static final String PASSWORD_RESET_TOKEN_EXPIRED_MESSAGE = "Reset token has expired";
+    private static final String PASSWORD_RESET_EMAIL_SUBJECT = "Your FootVerse password reset code";
 
     private final SecureRandom secureRandom = new SecureRandom();
 
     private final UserService userService;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final TokenHasher tokenHasher;
     private final CurrentUserProvider currentUserProvider;
+    private final EmailSender emailSender;
     private final long accessTokenTtlSeconds;
     private final long refreshTokenTtlSeconds;
+    private final long otpTtlSeconds;
+    private final long resetTokenTtlSeconds;
+    private final int maxAttempts;
 
     /**
      * Creates the service.
      *
-     * @param userService            the user-module façade
-     * @param refreshTokenRepository  the refresh-token store
-     * @param passwordEncoder         the BCrypt password encoder
-     * @param jwtUtil                 the access-token utility
-     * @param tokenHasher             the SHA-256 hasher for refresh tokens
-     * @param currentUserProvider     the authenticated-user access point (for logout ownership)
-     * @param accessTokenTtlSeconds   the access-token TTL in seconds (for {@code expiresIn})
-     * @param refreshTokenTtlSeconds  the refresh-token TTL in seconds
+     * @param userService                  the user-module façade
+     * @param refreshTokenRepository        the refresh-token store
+     * @param passwordResetTokenRepository  the password-reset attempt store
+     * @param passwordEncoder               the BCrypt password encoder
+     * @param jwtUtil                       the access-token utility
+     * @param tokenHasher                   the SHA-256 hasher for refresh and reset tokens
+     * @param currentUserProvider           the authenticated-user access point (for logout ownership)
+     * @param emailSender                   the outbound mail gateway for the reset code
+     * @param accessTokenTtlSeconds         the access-token TTL in seconds (for {@code expiresIn})
+     * @param refreshTokenTtlSeconds        the refresh-token TTL in seconds
+     * @param otpTtlSeconds                 the one-time-code TTL in seconds
+     * @param resetTokenTtlSeconds          the verified reset-token TTL in seconds
+     * @param maxAttempts                   the number of wrong-code attempts allowed before the row
+     *                                      is invalidated
      */
     public AuthServiceImpl(UserService userService,
                            RefreshTokenRepository refreshTokenRepository,
+                           PasswordResetTokenRepository passwordResetTokenRepository,
                            PasswordEncoder passwordEncoder,
                            JwtUtil jwtUtil,
                            TokenHasher tokenHasher,
                            CurrentUserProvider currentUserProvider,
+                           EmailSender emailSender,
                            @Value("${footverse.jwt.access-token-ttl-seconds}") long accessTokenTtlSeconds,
-                           @Value("${footverse.jwt.refresh-token-ttl-seconds}") long refreshTokenTtlSeconds) {
+                           @Value("${footverse.jwt.refresh-token-ttl-seconds}") long refreshTokenTtlSeconds,
+                           @Value("${footverse.password-reset.otp-ttl-seconds}") long otpTtlSeconds,
+                           @Value("${footverse.password-reset.reset-token-ttl-seconds}")
+                                   long resetTokenTtlSeconds,
+                           @Value("${footverse.password-reset.max-attempts}") int maxAttempts) {
         this.userService = userService;
         this.refreshTokenRepository = refreshTokenRepository;
+        this.passwordResetTokenRepository = passwordResetTokenRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
         this.tokenHasher = tokenHasher;
         this.currentUserProvider = currentUserProvider;
+        this.emailSender = emailSender;
         this.accessTokenTtlSeconds = accessTokenTtlSeconds;
         this.refreshTokenTtlSeconds = refreshTokenTtlSeconds;
+        this.otpTtlSeconds = otpTtlSeconds;
+        this.resetTokenTtlSeconds = resetTokenTtlSeconds;
+        this.maxAttempts = maxAttempts;
     }
 
     @Override
@@ -214,8 +262,122 @@ public class AuthServiceImpl implements AuthService {
         refreshTokenRepository.delete(existing);
     }
 
+    /**
+     * Requests a password-reset one-time code (Design Note — never reveal whether an email is
+     * registered). The lookup runs first and every branch does equally little work, so neither the
+     * response body nor its timing leaks whether the account exists: only a matching, enabled
+     * account gets a fresh row and an email.
+     */
+    @Override
+    @Transactional
+    public void forgotPassword(ForgotPasswordRequest request) {
+        String email = request.email().toLowerCase(Locale.ROOT);
+        userService.findByEmail(email)
+                .filter(User::isEnabled)
+                .ifPresent(this::issuePasswordResetOtp);
+    }
+
+    private void issuePasswordResetOtp(User user) {
+        passwordResetTokenRepository.deleteByUserId(user.getId());
+
+        String otp = generateOtp();
+        PasswordResetToken resetToken = new PasswordResetToken();
+        resetToken.setUser(user);
+        resetToken.setOtpHash(tokenHasher.hash(otp));
+        resetToken.setExpiresAt(LocalDateTime.now().plusSeconds(otpTtlSeconds));
+        passwordResetTokenRepository.save(resetToken);
+
+        emailSender.send(user.getEmail(), PASSWORD_RESET_EMAIL_SUBJECT, passwordResetEmailBody(otp));
+    }
+
+    private String passwordResetEmailBody(String otp) {
+        long minutes = otpTtlSeconds / 60;
+        return "Your FootVerse password reset code is " + otp + ". It expires in " + minutes
+                + " minutes. If you did not request this, you can safely ignore this email.";
+    }
+
+    /**
+     * Verifies an emailed one-time code (security-spec §2-style single-use flow, mirrored from
+     * refresh-token rotation). An expired row is deleted and rejected; a wrong code increments
+     * {@code attemptCount} and destroys the row once {@code maxAttempts} is reached; a correct code
+     * issues a fresh opaque reset token and re-points the row's {@code expiresAt} at the shorter
+     * reset-token TTL, since the same row now enters its verified stage.
+     *
+     * <p>{@code noRollbackFor = BusinessException.class} preserves the writes made on the rejecting
+     * paths — the expired-row delete and the wrong-code attempt increment (or the delete once
+     * {@code maxAttempts} is reached) — exactly as {@link #refresh} preserves its step-5 cleanup; a
+     * plain {@code @Transactional} would otherwise undo them the moment the {@link BusinessException}
+     * is thrown, silently defeating both the expiry cleanup and the attempt limit. The happy path
+     * never throws, so it is unaffected.</p>
+     */
+    @Override
+    @Transactional(noRollbackFor = BusinessException.class)
+    public PasswordResetTokenResponse verifyResetOtp(VerifyResetOtpRequest request) {
+        String email = request.email().toLowerCase(Locale.ROOT);
+        User user = userService.findByEmail(email)
+                .orElseThrow(() -> new BusinessException(HttpStatus.BAD_REQUEST,
+                        PASSWORD_RESET_OTP_INVALID_CODE, PASSWORD_RESET_OTP_INVALID_MESSAGE));
+        PasswordResetToken resetToken = passwordResetTokenRepository.findByUserId(user.getId())
+                .orElseThrow(() -> new BusinessException(HttpStatus.BAD_REQUEST,
+                        PASSWORD_RESET_OTP_INVALID_CODE, PASSWORD_RESET_OTP_INVALID_MESSAGE));
+
+        if (resetToken.getExpiresAt().isBefore(LocalDateTime.now())) {
+            passwordResetTokenRepository.delete(resetToken);
+            throw new BusinessException(HttpStatus.BAD_REQUEST,
+                    PASSWORD_RESET_OTP_EXPIRED_CODE, PASSWORD_RESET_OTP_EXPIRED_MESSAGE);
+        }
+
+        if (!tokenHasher.hash(request.otp()).equals(resetToken.getOtpHash())) {
+            resetToken.setAttemptCount(resetToken.getAttemptCount() + 1);
+            if (resetToken.getAttemptCount() >= maxAttempts) {
+                passwordResetTokenRepository.delete(resetToken);
+            } else {
+                passwordResetTokenRepository.save(resetToken);
+            }
+            throw new BusinessException(HttpStatus.BAD_REQUEST,
+                    PASSWORD_RESET_OTP_INVALID_CODE, PASSWORD_RESET_OTP_INVALID_MESSAGE);
+        }
+
+        String rawResetToken = generateOpaqueToken(RESET_TOKEN_BYTES);
+        resetToken.setResetTokenHash(tokenHasher.hash(rawResetToken));
+        resetToken.setVerifiedAt(LocalDateTime.now());
+        resetToken.setExpiresAt(LocalDateTime.now().plusSeconds(resetTokenTtlSeconds));
+        passwordResetTokenRepository.save(resetToken);
+
+        return new PasswordResetTokenResponse(rawResetToken, resetTokenTtlSeconds);
+    }
+
+    /**
+     * Sets a new password using a verified reset token (single-use) and revokes every refresh token
+     * the account holds, ending every existing session.
+     *
+     * <p>{@code noRollbackFor = BusinessException.class} preserves the expired-token row deletion on
+     * its rejecting path, exactly as {@link #verifyResetOtp} and {@link #refresh} preserve their own
+     * cleanup writes; the happy path never throws, so it is unaffected.</p>
+     */
+    @Override
+    @Transactional(noRollbackFor = BusinessException.class)
+    public void resetPassword(ResetPasswordRequest request) {
+        String resetTokenHash = tokenHasher.hash(request.resetToken());
+        PasswordResetToken resetToken = passwordResetTokenRepository.findByResetTokenHash(resetTokenHash)
+                .filter(token -> token.getVerifiedAt() != null)
+                .orElseThrow(() -> new BusinessException(HttpStatus.BAD_REQUEST,
+                        PASSWORD_RESET_TOKEN_INVALID_CODE, PASSWORD_RESET_TOKEN_INVALID_MESSAGE));
+
+        if (resetToken.getExpiresAt().isBefore(LocalDateTime.now())) {
+            passwordResetTokenRepository.delete(resetToken);
+            throw new BusinessException(HttpStatus.BAD_REQUEST,
+                    PASSWORD_RESET_TOKEN_EXPIRED_CODE, PASSWORD_RESET_TOKEN_EXPIRED_MESSAGE);
+        }
+
+        User user = resetToken.getUser();
+        userService.resetPassword(user, passwordEncoder.encode(request.newPassword()));
+        passwordResetTokenRepository.delete(resetToken);
+        refreshTokenRepository.deleteByUserId(user.getId());
+    }
+
     private String issueRefreshToken(User user) {
-        String rawToken = generateRawRefreshToken();
+        String rawToken = generateOpaqueToken(REFRESH_TOKEN_BYTES);
         RefreshToken refreshToken = new RefreshToken();
         refreshToken.setUser(user);
         refreshToken.setTokenHash(tokenHasher.hash(rawToken));
@@ -224,9 +386,14 @@ public class AuthServiceImpl implements AuthService {
         return rawToken;
     }
 
-    private String generateRawRefreshToken() {
-        byte[] randomBytes = new byte[REFRESH_TOKEN_BYTES];
+    private String generateOpaqueToken(int byteLength) {
+        byte[] randomBytes = new byte[byteLength];
         secureRandom.nextBytes(randomBytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
+    }
+
+    private String generateOtp() {
+        int code = secureRandom.nextInt(OTP_BOUND);
+        return String.format(OTP_FORMAT, code);
     }
 }

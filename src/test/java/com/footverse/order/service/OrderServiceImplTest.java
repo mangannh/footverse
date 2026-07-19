@@ -2,12 +2,16 @@ package com.footverse.order.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -15,7 +19,13 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -43,12 +53,16 @@ import com.footverse.common.exception.ResourceNotFoundException;
 import com.footverse.common.security.CurrentUserProvider;
 import com.footverse.order.dto.AdminOrderDetailResponse;
 import com.footverse.order.dto.AdminOrderSummaryResponse;
+import com.footverse.order.dto.BestSellingProductResponse;
 import com.footverse.order.dto.CouponPreviewRequest;
 import com.footverse.order.dto.CouponPreviewResponse;
 import com.footverse.order.dto.CouponResponse;
 import com.footverse.order.dto.CreateCouponRequest;
+import com.footverse.order.dto.DashboardResponse;
+import com.footverse.order.dto.MonthlyRevenueResponse;
 import com.footverse.order.dto.OrderDetailResponse;
 import com.footverse.order.dto.OrderItemResponse;
+import com.footverse.order.dto.OrderStatusCountResponse;
 import com.footverse.order.dto.OrderSummaryResponse;
 import com.footverse.order.dto.PlaceOrderRequest;
 import com.footverse.order.dto.UpdateCouponRequest;
@@ -58,13 +72,18 @@ import com.footverse.order.entity.DiscountType;
 import com.footverse.order.entity.Order;
 import com.footverse.order.entity.OrderItem;
 import com.footverse.order.entity.OrderStatus;
+import com.footverse.order.dto.PaymentUrlResponse;
+import com.footverse.order.dto.VnpayReturnResponse;
 import com.footverse.order.entity.PaymentMethod;
 import com.footverse.order.entity.PaymentStatus;
+import com.footverse.order.entity.PaymentTransaction;
+import com.footverse.order.entity.PaymentTransactionStatus;
 import com.footverse.order.mapper.CouponMapper;
 import com.footverse.order.mapper.OrderMapper;
 import com.footverse.order.repository.CouponRepository;
 import com.footverse.order.repository.OrderItemRepository;
 import com.footverse.order.repository.OrderRepository;
+import com.footverse.order.repository.PaymentTransactionRepository;
 import com.footverse.product.dto.ProductVariantPurchaseSnapshot;
 import com.footverse.product.dto.ProductVariantResponse;
 import com.footverse.product.entity.ProductVariantStatus;
@@ -88,6 +107,17 @@ class OrderServiceImplTest {
     private static final Long VARIANT_ID = 7L;
     private static final Long ADDRESS_ID = 3L;
     private static final BigDecimal SHIPPING_FEE = new BigDecimal("30000.00");
+
+    // Sprint 13 Task 09: a fixed, non-secret test configuration — no VNPay sandbox is ever contacted.
+    private static final String VNPAY_TMN_CODE = "TESTTMN01";
+    private static final String VNPAY_HASH_SECRET = "TESTSECRETKEY123456";
+    private static final String VNPAY_PAY_URL = "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html";
+    private static final String VNPAY_RETURN_URL = "http://localhost:8080/api/v1/payments/vnpay/return";
+    private static final String VNPAY_VERSION = "2.1.0";
+    private static final String VNPAY_COMMAND = "pay";
+    private static final String VNPAY_CURRENCY = "VND";
+    private static final String VNPAY_LOCALE = "vn";
+    private static final long VNPAY_EXPIRE_MINUTES = 15L;
 
     @Mock
     private CouponRepository couponRepository;
@@ -116,11 +146,16 @@ class OrderServiceImplTest {
     @Mock
     private CurrentUserProvider currentUserProvider;
 
+    @Mock
+    private PaymentTransactionRepository paymentTransactionRepository;
+
     private OrderServiceImpl service;
 
     private void init() {
         service = new OrderServiceImpl(couponRepository, couponMapper, cartService, productVariantService,
-                addressService, orderRepository, orderItemRepository, orderMapper, currentUserProvider);
+                addressService, orderRepository, orderItemRepository, orderMapper, currentUserProvider,
+                paymentTransactionRepository, VNPAY_TMN_CODE, VNPAY_HASH_SECRET, VNPAY_PAY_URL, VNPAY_RETURN_URL,
+                VNPAY_VERSION, VNPAY_COMMAND, VNPAY_CURRENCY, VNPAY_LOCALE, VNPAY_EXPIRE_MINUTES);
     }
 
     private CouponPreviewRequest request(String code) {
@@ -596,7 +631,11 @@ class OrderServiceImplTest {
     // ----- Checkout (placeOrder) -----
 
     private PlaceOrderRequest placeRequest(String couponCode) {
-        return new PlaceOrderRequest(List.of(CART_ITEM_ID), ADDRESS_ID, couponCode, "note");
+        return new PlaceOrderRequest(List.of(CART_ITEM_ID), ADDRESS_ID, couponCode, "note", null);
+    }
+
+    private PlaceOrderRequest placeRequest(String couponCode, PaymentMethod paymentMethod) {
+        return new PlaceOrderRequest(List.of(CART_ITEM_ID), ADDRESS_ID, couponCode, "note", paymentMethod);
     }
 
     private AddressResponse address() {
@@ -685,6 +724,28 @@ class OrderServiceImplTest {
         verify(productVariantService).decrementStock(Map.of(VARIANT_ID, 2));
         verify(cartService).removeCheckedOutItems(List.of(CART_ITEM_ID));
         verify(couponRepository, never()).save(any());
+    }
+
+    /**
+     * An explicit {@code VNPAY} request builds a {@code VNPAY} order (Sprint 13 Task 08, Design
+     * Decision 8) rather than the resolved {@code COD} default, still {@code PENDING}/{@code UNPAID}.
+     */
+    @Test
+    void placeOrderWithVnpayPaymentMethodBuildsVnpayOrder() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        withCheckoutLine(2, "100.00");
+        when(addressService.getMyAddress(ADDRESS_ID)).thenReturn(address());
+        withSuccessfulPersistence();
+
+        service.placeOrder(placeRequest(null, PaymentMethod.VNPAY));
+
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).saveAndFlush(orderCaptor.capture());
+        Order saved = orderCaptor.getValue();
+        assertThat(saved.getPaymentMethod()).isEqualTo(PaymentMethod.VNPAY);
+        assertThat(saved.getPaymentStatus()).isEqualTo(PaymentStatus.UNPAID);
+        assertThat(saved.getStatus()).isEqualTo(OrderStatus.PENDING);
     }
 
     /**
@@ -1017,6 +1078,356 @@ class OrderServiceImplTest {
                 .hasFieldOrPropertyWithValue("errorCode", "ORDER_NOT_FOUND");
     }
 
+    // ----- Payment (createPaymentUrl / handleVnpayReturn — Sprint 13 Task 09) -----
+
+    private static final String TXN_REF = "VNP-TEST-REF";
+
+    private PaymentTransaction transaction(Order order, String txnRef, PaymentTransactionStatus status) {
+        PaymentTransaction transaction = new PaymentTransaction();
+        transaction.setOrder(order);
+        transaction.setTxnRef(txnRef);
+        transaction.setProvider("VNPAY");
+        transaction.setAmount(order.getTotal());
+        transaction.setStatus(status);
+        return transaction;
+    }
+
+    private String vnpAmount(BigDecimal amount) {
+        return amount.multiply(new BigDecimal("100")).toBigInteger().toString();
+    }
+
+    private Map<String, String> parseQueryParams(String url) {
+        String query = url.substring(url.indexOf('?') + 1);
+        Map<String, String> params = new HashMap<>();
+        for (String pair : query.split("&")) {
+            String[] kv = pair.split("=", 2);
+            params.put(kv[0], URLDecoder.decode(kv[1], StandardCharsets.US_ASCII));
+        }
+        return params;
+    }
+
+    /** Builds a return-callback parameter set, signed with the test secret via {@link VnpaySigner}. */
+    private Map<String, String> signedReturnParams(String txnRef, BigDecimal amount, String responseCode) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("vnp_Amount", vnpAmount(amount));
+        params.put("vnp_ResponseCode", responseCode);
+        params.put("vnp_TmnCode", VNPAY_TMN_CODE);
+        params.put("vnp_TransactionNo", "14000000");
+        params.put("vnp_TxnRef", txnRef);
+        params.put("vnp_SecureHash", VnpaySigner.sign(params, VNPAY_HASH_SECRET));
+        return params;
+    }
+
+    /**
+     * A signed VNPay payment URL contains the configured terminal code, the order's exact amount
+     * (× 100, VNPay's wire format), a {@code vnp_TxnRef} matching the created transaction, and a
+     * signature {@link VnpaySigner#verify} itself accepts.
+     */
+    @Test
+    void createPaymentUrlBuildsASignedUrlWithTerminalCodeAmountAndValidSignature() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        Order order = order(9L);
+        order.setPaymentMethod(PaymentMethod.VNPAY);
+        order.setTotal(new BigDecimal("380000.00"));
+        when(orderRepository.findByIdAndUserId(9L, USER_ID)).thenReturn(Optional.of(order));
+        when(paymentTransactionRepository
+                .findFirstByOrderIdAndStatusOrderByIdDesc(9L, PaymentTransactionStatus.PENDING))
+                .thenReturn(Optional.empty());
+
+        PaymentUrlResponse response = service.createPaymentUrl(9L);
+
+        Map<String, String> params = parseQueryParams(response.paymentUrl());
+        assertThat(params.get("vnp_TmnCode")).isEqualTo(VNPAY_TMN_CODE);
+        assertThat(params.get("vnp_Amount")).isEqualTo("38000000");
+        assertThat(params.get("vnp_TxnRef")).isEqualTo(response.txnRef());
+        assertThat(VnpaySigner.verify(params, VNPAY_HASH_SECRET)).isTrue();
+
+        ArgumentCaptor<PaymentTransaction> captor = ArgumentCaptor.forClass(PaymentTransaction.class);
+        verify(paymentTransactionRepository).save(captor.capture());
+        PaymentTransaction saved = captor.getValue();
+        assertThat(saved.getStatus()).isEqualTo(PaymentTransactionStatus.PENDING);
+        assertThat(saved.getAmount()).isEqualByComparingTo("380000.00");
+        assertThat(saved.getTxnRef()).isEqualTo(response.txnRef());
+        assertThat(response.expiresAt()).isAfter(LocalDateTime.now());
+    }
+
+    @Test
+    void createPaymentUrlForAnotherUsersOrderIsForbidden() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        when(orderRepository.findByIdAndUserId(9L, USER_ID)).thenReturn(Optional.empty());
+        when(orderRepository.existsById(9L)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.createPaymentUrl(9L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "ORDER_FORBIDDEN")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.FORBIDDEN);
+        verify(paymentTransactionRepository, never()).save(any());
+    }
+
+    @Test
+    void createPaymentUrlForAnUnknownOrderIsNotFound() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        when(orderRepository.findByIdAndUserId(9L, USER_ID)).thenReturn(Optional.empty());
+        when(orderRepository.existsById(9L)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.createPaymentUrl(9L))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "ORDER_NOT_FOUND");
+    }
+
+    /**
+     * A {@code COD} order can never request a VNPay payment URL.
+     */
+    @Test
+    void createPaymentUrlForCodOrderIsNotApplicable() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        Order order = order(9L); // PENDING / COD / UNPAID
+        when(orderRepository.findByIdAndUserId(9L, USER_ID)).thenReturn(Optional.of(order));
+
+        assertThatThrownBy(() -> service.createPaymentUrl(9L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "PAYMENT_NOT_APPLICABLE")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.CONFLICT);
+        verify(paymentTransactionRepository, never()).save(any());
+    }
+
+    /**
+     * An order already {@code PAID} — even while still {@code PENDING} status, e.g. paid but not yet
+     * admin-confirmed — cannot request a second payment URL.
+     */
+    @Test
+    void createPaymentUrlForAlreadyPaidOrderIsNotApplicable() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        Order order = order(9L);
+        order.setPaymentMethod(PaymentMethod.VNPAY);
+        order.setPaymentStatus(PaymentStatus.PAID);
+        when(orderRepository.findByIdAndUserId(9L, USER_ID)).thenReturn(Optional.of(order));
+
+        assertThatThrownBy(() -> service.createPaymentUrl(9L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "PAYMENT_NOT_APPLICABLE");
+        verify(paymentTransactionRepository, never()).save(any());
+    }
+
+    /**
+     * A completed ({@code DELIVERED}) order is no longer {@code PENDING} and cannot request a
+     * payment URL.
+     */
+    @Test
+    void createPaymentUrlForACompletedOrderIsNotApplicable() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        Order order = order(9L);
+        order.setPaymentMethod(PaymentMethod.VNPAY);
+        order.setStatus(OrderStatus.DELIVERED);
+        when(orderRepository.findByIdAndUserId(9L, USER_ID)).thenReturn(Optional.of(order));
+
+        assertThatThrownBy(() -> service.createPaymentUrl(9L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "PAYMENT_NOT_APPLICABLE");
+        verify(paymentTransactionRepository, never()).save(any());
+    }
+
+    /**
+     * A second request supersedes the first: the earlier {@code PENDING} transaction is marked
+     * {@code FAILED} and saved, and a brand-new {@code PENDING} transaction is created — never reused
+     * (database-spec §10.17, sprint-13-plan Task 08 Design Decision 7).
+     */
+    @Test
+    void createPaymentUrlSecondCallSupersedesTheFirstTransaction() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        Order order = order(9L);
+        order.setPaymentMethod(PaymentMethod.VNPAY);
+        when(orderRepository.findByIdAndUserId(9L, USER_ID)).thenReturn(Optional.of(order));
+        when(paymentTransactionRepository
+                .findFirstByOrderIdAndStatusOrderByIdDesc(9L, PaymentTransactionStatus.PENDING))
+                .thenReturn(Optional.empty());
+
+        service.createPaymentUrl(9L);
+
+        ArgumentCaptor<PaymentTransaction> firstCaptor = ArgumentCaptor.forClass(PaymentTransaction.class);
+        verify(paymentTransactionRepository).save(firstCaptor.capture());
+        PaymentTransaction firstTransaction = firstCaptor.getValue();
+        assertThat(firstTransaction.getStatus()).isEqualTo(PaymentTransactionStatus.PENDING);
+
+        when(paymentTransactionRepository
+                .findFirstByOrderIdAndStatusOrderByIdDesc(9L, PaymentTransactionStatus.PENDING))
+                .thenReturn(Optional.of(firstTransaction));
+
+        service.createPaymentUrl(9L);
+
+        assertThat(firstTransaction.getStatus()).isEqualTo(PaymentTransactionStatus.FAILED);
+        verify(paymentTransactionRepository, times(2)).save(same(firstTransaction));
+
+        ArgumentCaptor<PaymentTransaction> allCaptor = ArgumentCaptor.forClass(PaymentTransaction.class);
+        verify(paymentTransactionRepository, times(3)).save(allCaptor.capture());
+        PaymentTransaction secondTransaction = allCaptor.getAllValues().get(2);
+        assertThat(secondTransaction).isNotSameAs(firstTransaction);
+        assertThat(secondTransaction.getStatus()).isEqualTo(PaymentTransactionStatus.PENDING);
+    }
+
+    /**
+     * The signature is verified before any other field is read (Design Decision 6): a tampered hash
+     * is rejected without the handler ever looking the transaction up by {@code vnp_TxnRef}, and
+     * writes nothing.
+     */
+    @Test
+    void handleVnpayReturnWithInvalidSignatureIsRejectedAndWritesNothing() {
+        init();
+        Map<String, String> params = signedReturnParams(TXN_REF, new BigDecimal("380000.00"), "00");
+        params.put("vnp_SecureHash", "tampered-hash-value");
+
+        assertThatThrownBy(() -> service.handleVnpayReturn(params))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "PAYMENT_SIGNATURE_INVALID")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.BAD_REQUEST);
+
+        verify(paymentTransactionRepository, never()).findByTxnRef(any());
+        verify(paymentTransactionRepository, never()).save(any());
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void handleVnpayReturnWithUnknownTxnRefIsNotFound() {
+        init();
+        Map<String, String> params = signedReturnParams(TXN_REF, new BigDecimal("380000.00"), "00");
+        when(paymentTransactionRepository.findByTxnRef(TXN_REF)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.handleVnpayReturn(params))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "PAYMENT_TRANSACTION_NOT_FOUND")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void handleVnpayReturnWithAmountMismatchIsRejectedAndWritesNothing() {
+        init();
+        Order order = order(9L);
+        order.setTotal(new BigDecimal("380000.00"));
+        PaymentTransaction tx = transaction(order, TXN_REF, PaymentTransactionStatus.PENDING);
+        when(paymentTransactionRepository.findByTxnRef(TXN_REF)).thenReturn(Optional.of(tx));
+        Map<String, String> params = signedReturnParams(TXN_REF, new BigDecimal("999999.00"), "00");
+
+        assertThatThrownBy(() -> service.handleVnpayReturn(params))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", "PAYMENT_AMOUNT_MISMATCH")
+                .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.BAD_REQUEST);
+
+        assertThat(tx.getStatus()).isEqualTo(PaymentTransactionStatus.PENDING);
+        verify(paymentTransactionRepository, never()).save(any());
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void handleVnpayReturnSuccessMarksTransactionAndOrderPaid() {
+        init();
+        Order order = order(9L);
+        order.setTotal(new BigDecimal("380000.00"));
+        PaymentTransaction tx = transaction(order, TXN_REF, PaymentTransactionStatus.PENDING);
+        when(paymentTransactionRepository.findByTxnRef(TXN_REF)).thenReturn(Optional.of(tx));
+        Map<String, String> params = signedReturnParams(TXN_REF, order.getTotal(), "00");
+
+        VnpayReturnResponse response = service.handleVnpayReturn(params);
+
+        assertThat(tx.getStatus()).isEqualTo(PaymentTransactionStatus.SUCCESS);
+        assertThat(tx.getProviderTxnNo()).isEqualTo("14000000");
+        assertThat(tx.getResponseCode()).isEqualTo("00");
+        assertThat(tx.getPaidAt()).isNotNull();
+        assertThat(order.getPaymentStatus()).isEqualTo(PaymentStatus.PAID);
+        assertThat(response.success()).isTrue();
+        assertThat(response.orderId()).isEqualTo(9L);
+        assertThat(response.orderCode()).isEqualTo(order.getOrderCode());
+        verify(paymentTransactionRepository).save(tx);
+        verify(orderRepository).save(order);
+    }
+
+    @Test
+    void handleVnpayReturnFailureMarksTransactionFailedAndLeavesOrderUnpaid() {
+        init();
+        Order order = order(9L);
+        order.setTotal(new BigDecimal("380000.00"));
+        PaymentTransaction tx = transaction(order, TXN_REF, PaymentTransactionStatus.PENDING);
+        when(paymentTransactionRepository.findByTxnRef(TXN_REF)).thenReturn(Optional.of(tx));
+        Map<String, String> params = signedReturnParams(TXN_REF, order.getTotal(), "24");
+
+        VnpayReturnResponse response = service.handleVnpayReturn(params);
+
+        assertThat(tx.getStatus()).isEqualTo(PaymentTransactionStatus.FAILED);
+        assertThat(order.getPaymentStatus()).isEqualTo(PaymentStatus.UNPAID);
+        assertThat(response.success()).isFalse();
+        verify(paymentTransactionRepository).save(tx);
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void handleVnpayReturnReplayOfSuccessIsIdempotent() {
+        init();
+        Order order = order(9L);
+        order.setTotal(new BigDecimal("380000.00"));
+        order.setPaymentStatus(PaymentStatus.PAID);
+        PaymentTransaction tx = transaction(order, TXN_REF, PaymentTransactionStatus.SUCCESS);
+        tx.setResponseCode("00");
+        when(paymentTransactionRepository.findByTxnRef(TXN_REF)).thenReturn(Optional.of(tx));
+        Map<String, String> params = signedReturnParams(TXN_REF, order.getTotal(), "00");
+
+        VnpayReturnResponse response = service.handleVnpayReturn(params);
+
+        assertThat(response.success()).isTrue();
+        verify(paymentTransactionRepository, never()).save(any());
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void handleVnpayReturnReplayOfFailureIsIdempotent() {
+        init();
+        Order order = order(9L);
+        order.setTotal(new BigDecimal("380000.00"));
+        PaymentTransaction tx = transaction(order, TXN_REF, PaymentTransactionStatus.FAILED);
+        tx.setResponseCode("24");
+        when(paymentTransactionRepository.findByTxnRef(TXN_REF)).thenReturn(Optional.of(tx));
+        Map<String, String> params = signedReturnParams(TXN_REF, order.getTotal(), "24");
+
+        VnpayReturnResponse response = service.handleVnpayReturn(params);
+
+        assertThat(response.success()).isFalse();
+        verify(paymentTransactionRepository, never()).save(any());
+        verify(orderRepository, never()).save(any());
+    }
+
+    /**
+     * Cancelling a {@code PENDING} order marks any {@code PENDING} payment transaction {@code FAILED}
+     * (Sprint 13 Task 09) — an abandoned VNPay attempt is never redeemable after cancellation. The
+     * frozen stock-restore and coupon-decrement compensation is unaffected.
+     */
+    @Test
+    void cancelMyOrderMarksAnyPendingTransactionFailed() {
+        init();
+        when(currentUserProvider.getCurrentUser()).thenReturn(caller());
+        Order order = pendingOrderOwnedByCaller(9L, null);
+        order.setPaymentMethod(PaymentMethod.VNPAY);
+        OrderItem line = orderLineWithVariant(order, VARIANT_ID, 1);
+        when(orderItemRepository.findByOrderId(9L)).thenReturn(List.of(line));
+        withProductResolution();
+        when(orderMapper.toResponse(eq(line), any())).thenReturn(itemResponse());
+        when(orderMapper.toDetailResponse(eq(order), anyList())).thenReturn(detailResponse());
+        PaymentTransaction pending = transaction(order, TXN_REF, PaymentTransactionStatus.PENDING);
+        when(paymentTransactionRepository
+                .findFirstByOrderIdAndStatusOrderByIdDesc(9L, PaymentTransactionStatus.PENDING))
+                .thenReturn(Optional.of(pending));
+
+        service.cancelMyOrder(9L);
+
+        assertThat(pending.getStatus()).isEqualTo(PaymentTransactionStatus.FAILED);
+        verify(paymentTransactionRepository).save(pending);
+        verify(productVariantService).restoreStock(Map.of(VARIANT_ID, 1));
+    }
+
     // ----- Admin status machine (updateOrderStatus) -----
 
     private UpdateOrderStatusRequest statusRequest(OrderStatus status) {
@@ -1320,6 +1731,299 @@ class OrderServiceImplTest {
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasFieldOrPropertyWithValue("errorCode", "ORDER_NOT_FOUND")
                 .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.NOT_FOUND);
+    }
+
+    // ----- Admin dashboard (getDashboard, sprint-13-plan Task 01) -----
+
+    /**
+     * Stubs every dashboard repository read to its "empty store" shape (zero / empty), so an
+     * individual test can override only the read it cares about.
+     */
+    private void stubEmptyDashboardDefaults() {
+        OrderRepository.ProfitSummaryProjection emptyProfit = profitSummary(BigDecimal.ZERO, 0L, 0L);
+        lenient().when(orderRepository.sumTotalForDeliveredOrders()).thenReturn(BigDecimal.ZERO);
+        lenient().when(orderRepository.count()).thenReturn(0L);
+        lenient().when(orderRepository.findDeliveredOrderItemProfitSummary()).thenReturn(emptyProfit);
+        lenient().when(orderRepository.countOrdersGroupedByStatus()).thenReturn(List.of());
+        lenient().when(orderRepository.findMonthlyDeliveredRevenueSince(any())).thenReturn(List.of());
+        lenient().when(orderRepository.findTopSellingDeliveredVariants(any())).thenReturn(List.of());
+        lenient().when(orderRepository.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
+    }
+
+    /**
+     * Builds a stubbed {@link OrderRepository.StatusCountProjection}. Stubbed leniently: this builder
+     * is also used by {@link #stubEmptyDashboardDefaults()}, whose default result several tests
+     * deliberately override, which would otherwise leave the default's own getters flagged as
+     * unnecessary stubbing.
+     */
+    private OrderRepository.StatusCountProjection statusCount(OrderStatus status, long count) {
+        OrderRepository.StatusCountProjection projection = mock(OrderRepository.StatusCountProjection.class);
+        lenient().when(projection.getStatus()).thenReturn(status);
+        lenient().when(projection.getCount()).thenReturn(count);
+        return projection;
+    }
+
+    /**
+     * Builds a stubbed {@link OrderRepository.MonthlyRevenueProjection}. Leniently stubbed for the
+     * same reason as {@link #statusCount(OrderStatus, long)}.
+     */
+    private OrderRepository.MonthlyRevenueProjection monthlyRevenue(YearMonth yearMonth, String revenue,
+            int orderCount) {
+        OrderRepository.MonthlyRevenueProjection projection = mock(OrderRepository.MonthlyRevenueProjection.class);
+        lenient().when(projection.getYear()).thenReturn(yearMonth.getYear());
+        lenient().when(projection.getMonth()).thenReturn(yearMonth.getMonthValue());
+        lenient().when(projection.getRevenue()).thenReturn(new BigDecimal(revenue));
+        lenient().when(projection.getOrderCount()).thenReturn((long) orderCount);
+        return projection;
+    }
+
+    /**
+     * Builds a stubbed {@link OrderRepository.ProfitSummaryProjection}. Leniently stubbed for the
+     * same reason as {@link #statusCount(OrderStatus, long)} — {@link #stubEmptyDashboardDefaults()}'s
+     * empty default is overridden by several tests.
+     */
+    private OrderRepository.ProfitSummaryProjection profitSummary(BigDecimal grossProfit, long linesWithCost,
+            long linesTotal) {
+        OrderRepository.ProfitSummaryProjection projection = mock(OrderRepository.ProfitSummaryProjection.class);
+        lenient().when(projection.getGrossProfit()).thenReturn(grossProfit);
+        lenient().when(projection.getLinesWithCost()).thenReturn(linesWithCost);
+        lenient().when(projection.getLinesTotal()).thenReturn(linesTotal);
+        return projection;
+    }
+
+    /**
+     * Builds a stubbed {@link OrderRepository.VariantSalesProjection}. Leniently stubbed for the same
+     * reason as {@link #statusCount(OrderStatus, long)}.
+     */
+    private OrderRepository.VariantSalesProjection variantSales(Long variantId, long quantitySold, String revenue) {
+        OrderRepository.VariantSalesProjection projection = mock(OrderRepository.VariantSalesProjection.class);
+        lenient().when(projection.getProductVariantId()).thenReturn(variantId);
+        lenient().when(projection.getQuantitySold()).thenReturn(quantitySold);
+        lenient().when(projection.getRevenue()).thenReturn(new BigDecimal(revenue));
+        return projection;
+    }
+
+    /**
+     * An empty store — every repository read returns zero/empty — still yields a fully formed
+     * response: zeroed totals, exactly five zeroed status rows, exactly twelve zeroed month rows, and
+     * empty best-seller/recent-order lists. Nothing is {@code null} and nothing throws (Task 01
+     * Definition of Done).
+     */
+    @Test
+    void getDashboardOnEmptyStoreReturnsZerosAndEmptyListsWithoutException() {
+        init();
+        stubEmptyDashboardDefaults();
+
+        DashboardResponse response = service.getDashboard();
+
+        assertThat(response.totalRevenue()).isEqualByComparingTo("0");
+        assertThat(response.totalOrders()).isZero();
+        assertThat(response.grossProfit()).isEqualByComparingTo("0");
+        assertThat(response.profitLinesWithCost()).isZero();
+        assertThat(response.profitLinesTotal()).isZero();
+        assertThat(response.ordersByStatus()).hasSize(5);
+        assertThat(response.ordersByStatus()).allSatisfy(row -> assertThat(row.count()).isZero());
+        assertThat(response.monthlyRevenue()).hasSize(12);
+        assertThat(response.monthlyRevenue()).allSatisfy(row -> {
+            assertThat(row.revenue()).isEqualByComparingTo("0");
+            assertThat(row.orderCount()).isZero();
+        });
+        assertThat(response.bestSellingProducts()).isEmpty();
+        assertThat(response.recentOrders()).isEmpty();
+        verifyNoInteractions(productVariantService);
+    }
+
+    /**
+     * A status or month the repository has no row for is zero-filled by the service, never simply
+     * absent — proven by seeding one status and one month and asserting every other one of the five
+     * / twelve rows is still present, at zero.
+     */
+    @Test
+    void getDashboardZeroFillsStatusesAndMonthsTheRepositoryDidNotReturn() {
+        init();
+        stubEmptyDashboardDefaults();
+        OrderRepository.StatusCountProjection deliveredCount = statusCount(OrderStatus.DELIVERED, 3L);
+        when(orderRepository.countOrdersGroupedByStatus()).thenReturn(List.of(deliveredCount));
+        YearMonth currentMonth = YearMonth.now();
+        OrderRepository.MonthlyRevenueProjection currentMonthRevenue = monthlyRevenue(currentMonth, "500.00", 2);
+        when(orderRepository.findMonthlyDeliveredRevenueSince(any())).thenReturn(List.of(currentMonthRevenue));
+
+        DashboardResponse response = service.getDashboard();
+
+        assertThat(response.ordersByStatus()).hasSize(5)
+                .extracting(OrderStatusCountResponse::status, OrderStatusCountResponse::count)
+                .contains(tuple(OrderStatus.PENDING, 0L), tuple(OrderStatus.DELIVERED, 3L));
+
+        assertThat(response.monthlyRevenue()).hasSize(12);
+        MonthlyRevenueResponse currentRow = response.monthlyRevenue().get(response.monthlyRevenue().size() - 1);
+        assertThat(currentRow.year()).isEqualTo(currentMonth.getYear());
+        assertThat(currentRow.month()).isEqualTo(currentMonth.getMonthValue());
+        assertThat(currentRow.revenue()).isEqualByComparingTo("500.00");
+        assertThat(currentRow.orderCount()).isEqualTo(2);
+        MonthlyRevenueResponse oldestRow = response.monthlyRevenue().get(0);
+        assertThat(oldestRow.revenue()).isEqualByComparingTo("0");
+        assertThat(oldestRow.orderCount()).isZero();
+    }
+
+    /**
+     * The profit summary's coverage counts are reported exactly as the repository returned them —
+     * the service neither recomputes {@code grossProfit} nor derives the counts itself.
+     */
+    @Test
+    void getDashboardReportsProfitCoverageWithoutAlteringIt() {
+        init();
+        stubEmptyDashboardDefaults();
+        OrderRepository.ProfitSummaryProjection profit = profitSummary(new BigDecimal("123.45"), 3L, 5L);
+        when(orderRepository.findDeliveredOrderItemProfitSummary()).thenReturn(profit);
+
+        DashboardResponse response = service.getDashboard();
+
+        assertThat(response.grossProfit()).isEqualByComparingTo("123.45");
+        assertThat(response.profitLinesWithCost()).isEqualTo(3L);
+        assertThat(response.profitLinesTotal()).isEqualTo(5L);
+    }
+
+    /**
+     * Two variants of the same product fold into a single {@link BestSellingProductResponse} row,
+     * their quantities and revenue summed — proving the fold is by product, resolved through
+     * {@link ProductVariantService}, never by the snapshotted variant alone.
+     */
+    @Test
+    void getDashboardFoldsVariantSalesToProductLevel() {
+        init();
+        stubEmptyDashboardDefaults();
+        OrderRepository.VariantSalesProjection variant1Sales = variantSales(1L, 4L, "400.00");
+        OrderRepository.VariantSalesProjection variant2Sales = variantSales(2L, 6L, "600.00");
+        when(orderRepository.findTopSellingDeliveredVariants(any()))
+                .thenReturn(List.of(variant1Sales, variant2Sales));
+        when(productVariantService.getPurchaseSnapshot(1L)).thenReturn(new ProductVariantPurchaseSnapshot(
+                1L, 100L, "Air Force 1", "img.png", "Black", "40",
+                new BigDecimal("100.00"), new BigDecimal("60.00"), 10, true));
+        when(productVariantService.getPurchaseSnapshot(2L)).thenReturn(new ProductVariantPurchaseSnapshot(
+                2L, 100L, "Air Force 1", "img.png", "White", "41",
+                new BigDecimal("100.00"), new BigDecimal("60.00"), 10, true));
+
+        DashboardResponse response = service.getDashboard();
+
+        assertThat(response.bestSellingProducts()).hasSize(1);
+        BestSellingProductResponse product = response.bestSellingProducts().get(0);
+        assertThat(product.productId()).isEqualTo(100L);
+        assertThat(product.quantitySold()).isEqualTo(10);
+        assertThat(product.revenue()).isEqualByComparingTo("1000.00");
+    }
+
+    /**
+     * With more than five distinct products among the fetched variants, only the top five by
+     * quantity sold survive, in descending order — the sixth-best is dropped.
+     */
+    @Test
+    void getDashboardLimitsBestSellingProductsToTopFiveOrderedByQuantityDescending() {
+        init();
+        stubEmptyDashboardDefaults();
+        List<OrderRepository.VariantSalesProjection> rows = new ArrayList<>();
+        for (long productId = 1; productId <= 6; productId++) {
+            long variantId = productId + 100;
+            long quantitySold = 7 - productId;
+            rows.add(variantSales(variantId, quantitySold, quantitySold + ".00"));
+            when(productVariantService.getPurchaseSnapshot(variantId)).thenReturn(new ProductVariantPurchaseSnapshot(
+                    variantId, productId, "Product " + productId, null, "Black", "40",
+                    new BigDecimal("10.00"), new BigDecimal("5.00"), 10, true));
+        }
+        when(orderRepository.findTopSellingDeliveredVariants(any())).thenReturn(rows);
+
+        DashboardResponse response = service.getDashboard();
+
+        assertThat(response.bestSellingProducts()).hasSize(5)
+                .extracting(BestSellingProductResponse::productId)
+                .containsExactly(1L, 2L, 3L, 4L, 5L);
+    }
+
+    /**
+     * The best-seller fetch over-fetches fifty variants — not merely five — so folding two variants
+     * of one product cannot silently drop a genuinely popular product out of the final top five
+     * (Design Decision 10).
+     */
+    @Test
+    void getDashboardOverFetchesVariantsBeforeFolding() {
+        init();
+        stubEmptyDashboardDefaults();
+
+        service.getDashboard();
+
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        verify(orderRepository).findTopSellingDeliveredVariants(pageable.capture());
+        assertThat(pageable.getValue().getPageSize()).isEqualTo(50);
+    }
+
+    /**
+     * {@code recentOrders} reuses {@link AdminOrderSummaryResponse} through the same mapper method
+     * and the same computed-{@code itemCount} idiom {@link #adminListOrders} already uses — no
+     * near-duplicate row type is introduced.
+     */
+    @Test
+    void getDashboardReusesAdminOrderSummaryResponseForRecentOrders() {
+        init();
+        stubEmptyDashboardDefaults();
+        Order order = order(5L);
+        when(orderRepository.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(order)));
+        when(orderItemRepository.findByOrderIdIn(List.of(5L))).thenReturn(List.of(orderLine(order, 2)));
+        AdminOrderSummaryResponse expected = adminSummary(2);
+        when(orderMapper.toAdminSummaryResponse(eq(order), anyInt())).thenReturn(expected);
+
+        DashboardResponse response = service.getDashboard();
+
+        assertThat(response.recentOrders()).containsExactly(expected);
+    }
+
+    /**
+     * Exactly five, most-recent-first: the dashboard requests page 0, size 5, sorted
+     * {@code createdAt} descending — never more, never unsorted.
+     */
+    @Test
+    void getDashboardRequestsExactlyFiveMostRecentOrders() {
+        init();
+        stubEmptyDashboardDefaults();
+
+        service.getDashboard();
+
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        verify(orderRepository).findAll(pageable.capture());
+        Pageable used = pageable.getValue();
+        assertThat(used.getPageNumber()).isZero();
+        assertThat(used.getPageSize()).isEqualTo(5);
+        Sort.Order createdAt = used.getSort().getOrderFor("createdAt");
+        assertThat(createdAt).isNotNull();
+        assertThat(createdAt.getDirection()).isEqualTo(Sort.Direction.DESC);
+    }
+
+    /**
+     * {@code totalOrders} is the repository's own {@code count()} — every order regardless of
+     * status — never a sum the service recomputes.
+     */
+    @Test
+    void getDashboardTotalOrdersUsesRepositoryCountDirectly() {
+        init();
+        stubEmptyDashboardDefaults();
+        when(orderRepository.count()).thenReturn(42L);
+
+        DashboardResponse response = service.getDashboard();
+
+        assertThat(response.totalOrders()).isEqualTo(42L);
+    }
+
+    /**
+     * {@code totalRevenue} is the repository's own {@code DELIVERED}-scoped aggregate, passed
+     * through unchanged.
+     */
+    @Test
+    void getDashboardTotalRevenueUsesRepositoryAggregateDirectly() {
+        init();
+        stubEmptyDashboardDefaults();
+        when(orderRepository.sumTotalForDeliveredOrders()).thenReturn(new BigDecimal("999999.99"));
+
+        DashboardResponse response = service.getDashboard();
+
+        assertThat(response.totalRevenue()).isEqualByComparingTo("999999.99");
     }
 
     // ----- Admin coupon CRUD (getCoupons / createCoupon / updateCoupon) -----

@@ -45,7 +45,10 @@ const _$OrderStatusEnumMap = {
   OrderStatus.cancelled: 'CANCELLED',
 };
 
-const _$PaymentMethodEnumMap = {PaymentMethod.cod: 'COD'};
+const _$PaymentMethodEnumMap = {
+  PaymentMethod.cod: 'COD',
+  PaymentMethod.vnpay: 'VNPAY',
+};
 
 const _$PaymentStatusEnumMap = {
   PaymentStatus.unpaid: 'UNPAID',

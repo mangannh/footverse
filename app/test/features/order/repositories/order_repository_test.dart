@@ -113,6 +113,19 @@ const PlaceOrderRequest _placeRequest = PlaceOrderRequest(
   note: 'Giao giờ hành chính',
 );
 
+const PlaceOrderRequest _vnpayPlaceRequest = PlaceOrderRequest(
+  cartItemIds: <int>[1, 2],
+  addressId: 42,
+  paymentMethod: PaymentMethod.vnpay,
+);
+
+Map<String, dynamic> _paymentUrlData() => <String, dynamic>{
+  'paymentUrl':
+      'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_Amount=100',
+  'txnRef': 'VNP-700',
+  'expiresAt': '2025-01-15T10:45:00',
+};
+
 @GenerateNiceMocks([MockSpec<Dio>()])
 void main() {
   late MockDio dio;
@@ -205,6 +218,12 @@ void main() {
       ).captured;
       expect(captured[0], '/api/v1/orders');
       expect(captured[1], _placeRequest.toJson());
+      // COD (the default) never sends the paymentMethod field at all — never
+      // "COD", never null, never an empty string (Sprint 13 Task 10).
+      expect(
+        (captured[1] as Map<String, dynamic>).containsKey('paymentMethod'),
+        isFalse,
+      );
       expect(order.id, 700);
       expect(order.orderCode, 'FV-20250115103000123');
       expect(order.status, OrderStatus.pending);
@@ -213,6 +232,28 @@ void main() {
       expect(order.total, 3000000.0);
       expect(order.items, hasLength(1));
       expect(order.items.first.id, 900);
+    });
+
+    test('sends paymentMethod VNPAY when the caller chose VNPay', () async {
+      when(
+        dio.post<Map<String, dynamic>>(any, data: anyNamed('data')),
+      ).thenAnswer(
+        (_) async => _envelope(
+          '/api/v1/orders',
+          _orderDetailData()..['paymentMethod'] = 'VNPAY',
+        ),
+      );
+
+      final order = await repository.placeOrder(_vnpayPlaceRequest);
+
+      final captured = verify(
+        dio.post<Map<String, dynamic>>(
+          captureAny,
+          data: captureAnyNamed('data'),
+        ),
+      ).captured;
+      expect((captured[1] as Map<String, dynamic>)['paymentMethod'], 'VNPAY');
+      expect(order.paymentMethod, PaymentMethod.vnpay);
     });
 
     test(
@@ -401,6 +442,65 @@ void main() {
             (e) => e.errorCode,
             'errorCode',
             'ORDER_NOT_CANCELLABLE',
+          ),
+        ),
+      );
+    });
+  });
+
+  group('createPaymentUrl', () {
+    test(
+      'POSTs the payment path with no body, returns the typed URL',
+      () async {
+        when(dio.post<Map<String, dynamic>>(any)).thenAnswer(
+          (_) async =>
+              _envelope('/api/v1/orders/700/payment', _paymentUrlData()),
+        );
+
+        final result = await repository.createPaymentUrl(700);
+
+        final captured = verify(
+          dio.post<Map<String, dynamic>>(captureAny),
+        ).captured;
+        expect(captured[0], '/api/v1/orders/700/payment');
+        expect(
+          result.paymentUrl,
+          'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_Amount=100',
+        );
+        expect(result.txnRef, 'VNP-700');
+        expect(result.expiresAt, DateTime.parse('2025-01-15T10:45:00'));
+      },
+    );
+
+    test('surfaces PAYMENT_NOT_APPLICABLE as a typed AppException', () async {
+      when(
+        dio.post<Map<String, dynamic>>(any),
+      ).thenThrow(_errorWith('PAYMENT_NOT_APPLICABLE', 409));
+
+      await expectLater(
+        repository.createPaymentUrl(700),
+        throwsA(
+          isA<AppException>().having(
+            (e) => e.errorCode,
+            'errorCode',
+            'PAYMENT_NOT_APPLICABLE',
+          ),
+        ),
+      );
+    });
+
+    test('surfaces ORDER_FORBIDDEN as a typed AppException', () async {
+      when(
+        dio.post<Map<String, dynamic>>(any),
+      ).thenThrow(_errorWith('ORDER_FORBIDDEN', 403));
+
+      await expectLater(
+        repository.createPaymentUrl(700),
+        throwsA(
+          isA<AppException>().having(
+            (e) => e.errorCode,
+            'errorCode',
+            'ORDER_FORBIDDEN',
           ),
         ),
       );

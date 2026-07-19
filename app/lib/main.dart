@@ -32,7 +32,8 @@ Future<void> main() async {
   final dio = createDio();
   final refreshDio = createDio();
 
-  final authProvider = AuthProvider(AuthRepository(dio), tokenStorage);
+  final authRepository = AuthRepository(dio);
+  final authProvider = AuthProvider(authRepository, tokenStorage);
   final cartProvider = CartProvider(CartRepository(dio));
   final wishlistProvider = WishlistProvider(WishlistRepository(dio));
 
@@ -72,6 +73,7 @@ Future<void> main() async {
       wishlistProvider: wishlistProvider,
       router: createAppRouter(
         authProvider,
+        authRepository,
         ProductRepository(dio),
         CategoryRepository(dio),
         BrandRepository(dio),

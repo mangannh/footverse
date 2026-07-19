@@ -12,6 +12,7 @@ import '../models/payment_status.dart';
 import '../providers/order_detail_provider.dart';
 import '../repositories/order_repository.dart';
 import '../widgets/order_item_tile.dart';
+import 'payment_webview_screen.dart';
 
 /// The caller's full order with its checkout snapshots and the `PENDING`
 /// cancellation (sprint-8-plan item 07). It owns a screen-scoped
@@ -38,16 +39,24 @@ class OrderDetailScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return ChangeNotifierProvider<OrderDetailProvider>(
       create: (_) => OrderDetailProvider(orderRepository, orderId)..load(),
-      child: const _OrderDetailView(),
+      child: _OrderDetailView(orderRepository: orderRepository),
     );
   }
 }
 
 /// Renders the order detail and drives the cancel affordance (confirmation dialog
 /// then the single-flight provider cancel, with any enveloped rejection shown as a
-/// transient `SnackBar`, flutter-guidelines §Error Handling).
+/// transient `SnackBar`, flutter-guidelines §Error Handling) and, for a
+/// `PENDING`/`UNPAID`/`VNPAY` order, the retry-payment affordance (Sprint 13
+/// Task 10): it hosts [PaymentWebViewScreen] as a plain pushed route — not the
+/// nested checkout route, which owns its own [CheckoutProvider] state this
+/// screen has no relation to — and reloads through the existing
+/// [OrderDetailProvider.retry] once it returns, so the result is always the
+/// server's own answer.
 class _OrderDetailView extends StatelessWidget {
-  const _OrderDetailView();
+  const _OrderDetailView({required this.orderRepository});
+
+  final OrderRepository orderRepository;
 
   Future<void> _confirmCancel(BuildContext context) async {
     final provider = context.read<OrderDetailProvider>();
@@ -82,6 +91,24 @@ class _OrderDetailView extends StatelessWidget {
     }
   }
 
+  /// Retries payment for a `PENDING`/`UNPAID`/`VNPAY` order: hosts the gateway
+  /// page, then — regardless of outcome — reloads this screen's order through
+  /// the existing [OrderDetailProvider.retry] (Design Decision 6; no shortcut).
+  Future<void> _retryPayment(BuildContext context, int orderId) async {
+    final detailProvider = context.read<OrderDetailProvider>();
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PaymentWebViewScreen(
+          orderId: orderId,
+          orderRepository: orderRepository,
+        ),
+      ),
+    );
+    if (context.mounted) {
+      detailProvider.retry();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<OrderDetailProvider>();
@@ -107,6 +134,10 @@ class _OrderDetailView extends StatelessWidget {
 
   Widget _buildDetail(BuildContext context, OrderDetailProvider provider) {
     final order = provider.order!;
+    final canRetryPayment =
+        order.status == OrderStatus.pending &&
+        order.paymentMethod == PaymentMethod.vnpay &&
+        order.paymentStatus == PaymentStatus.unpaid;
     return Column(
       children: <Widget>[
         Expanded(
@@ -130,6 +161,8 @@ class _OrderDetailView extends StatelessWidget {
             ],
           ),
         ),
+        if (canRetryPayment)
+          _PayNowBar(onPay: () => _retryPayment(context, order.id)),
         if (order.status == OrderStatus.pending)
           _CancelBar(
             cancelling: provider.isCancelling,
@@ -175,6 +208,8 @@ class _OrderHeader extends StatelessWidget {
     switch (method) {
       case PaymentMethod.cod:
         return 'Cash on Delivery';
+      case PaymentMethod.vnpay:
+        return 'VNPay';
     }
   }
 
@@ -402,6 +437,30 @@ class _NoteSection extends StatelessWidget {
             const SizedBox(height: 4),
             Text(note, style: textTheme.bodyMedium),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The retry-payment bar, shown only for a `PENDING`/`UNPAID`/`VNPAY` order
+/// (Sprint 13 Task 10, UX Requirements — "the retry affordance on its detail
+/// screen"). Tapping opens [PaymentWebViewScreen]; the busy state while the
+/// gateway page loads is that screen's own, not this bar's.
+class _PayNowBar extends StatelessWidget {
+  const _PayNowBar({required this.onPay});
+
+  final VoidCallback onPay;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 3,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        child: SizedBox(
+          width: double.infinity,
+          child: FilledButton(onPressed: onPay, child: const Text('Pay now')),
         ),
       ),
     );

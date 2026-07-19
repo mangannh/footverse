@@ -9,6 +9,7 @@ import '../../address/repositories/address_repository.dart';
 import '../../cart/models/cart_item_response.dart';
 import '../../cart/providers/cart_provider.dart';
 import '../models/coupon_preview_response.dart';
+import '../models/payment_method.dart';
 import '../providers/checkout_provider.dart';
 import '../repositories/order_repository.dart';
 
@@ -102,6 +103,19 @@ class _CheckoutViewState extends State<_CheckoutView> {
       // The server removed the purchased lines; refresh the app-root cart through
       // its own public API so the badge and cart screen reflect it.
       cartProvider.load();
+      if (order.paymentMethod == PaymentMethod.vnpay) {
+        // Host the gateway's page; regardless of what happens there (paid,
+        // cancelled, or abandoned) the order detail screen re-reads the
+        // order from the server next — no shortcut (Design Decision 6).
+        await router.pushNamed(
+          AppRoute.paymentWebview,
+          pathParameters: <String, String>{'id': '${order.id}'},
+          extra: widget.cartItemIds,
+        );
+        if (!mounted) {
+          return;
+        }
+      }
       router.goNamed(
         AppRoute.orderDetail,
         pathParameters: <String, String>{'id': '${order.id}'},
@@ -171,6 +185,12 @@ class _CheckoutViewState extends State<_CheckoutView> {
                 address: provider.selectedAddress,
                 onChange: provider.addresses.isEmpty ? null : _changeAddress,
                 onAdd: _goToAddresses,
+              ),
+              const SizedBox(height: 24),
+              _PaymentMethodSection(
+                selected: provider.paymentMethod,
+                enabled: !busy,
+                onChanged: provider.selectPaymentMethod,
               ),
               const SizedBox(height: 24),
               _CouponSection(
@@ -294,6 +314,54 @@ class _AddressSection extends StatelessWidget {
               ),
             ],
           ),
+      ],
+    );
+  }
+}
+
+/// The payment-method selector: `COD` (Sprint 8) and `VNPay` (Sprint 13
+/// Task 10), defaulting to `COD` (business-rules → Payment). Disabled while a
+/// preview or place is in flight, exactly like the coupon affordances.
+class _PaymentMethodSection extends StatelessWidget {
+  const _PaymentMethodSection({
+    required this.selected,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final PaymentMethod selected;
+  final bool enabled;
+  final ValueChanged<PaymentMethod> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text('Payment method', style: textTheme.titleMedium),
+        RadioGroup<PaymentMethod>(
+          groupValue: selected,
+          onChanged: (value) {
+            if (enabled && value != null) {
+              onChanged(value);
+            }
+          },
+          child: const Column(
+            children: <Widget>[
+              RadioListTile<PaymentMethod>(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Cash on Delivery'),
+                value: PaymentMethod.cod,
+              ),
+              RadioListTile<PaymentMethod>(
+                contentPadding: EdgeInsets.zero,
+                title: Text('VNPay'),
+                value: PaymentMethod.vnpay,
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }

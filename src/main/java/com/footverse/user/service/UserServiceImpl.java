@@ -100,6 +100,13 @@ public class UserServiceImpl implements UserService {
 
     @Override
     @Transactional
+    public void resetPassword(User user, String encodedPassword) {
+        user.setPassword(encodedPassword);
+        userRepository.save(user);
+    }
+
+    @Override
+    @Transactional
     public UserResponse changeEmail(ChangeEmailRequest request) {
         User user = currentUserProvider.getCurrentUser();
         verifyCurrentPassword(request.currentPassword(), user);

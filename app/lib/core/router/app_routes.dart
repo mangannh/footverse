@@ -11,12 +11,16 @@ class AppRoute {
   static const String productDetail = 'productDetail';
   static const String login = 'login';
   static const String register = 'register';
+  static const String forgotPassword = 'forgotPassword';
+  static const String verifyResetOtp = 'verifyResetOtp';
+  static const String resetPassword = 'resetPassword';
   static const String account = 'account';
   static const String addresses = 'addresses';
   static const String addressForm = 'addressForm';
   static const String cart = 'cart';
   static const String wishlist = 'wishlist';
   static const String checkout = 'checkout';
+  static const String paymentWebview = 'paymentWebview';
   static const String orders = 'orders';
   static const String orderDetail = 'orderDetail';
   static const String profile = 'profile';

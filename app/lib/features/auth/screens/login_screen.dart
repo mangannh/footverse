@@ -12,8 +12,18 @@ import '../validators/auth_validators.dart';
 /// constraints, and drives [AuthProvider.login]. On success the router redirect
 /// navigates away (auth state change); API errors render the envelope's
 /// user-safe message (flutter-guidelines §Error Handling).
+///
+/// [prefillEmail] is set only by a successful password-reset completion
+/// (sprint-13-plan Task 07): the email field is seeded with it and a success
+/// message is shown once, on the first frame. It never signs the user in —
+/// the reset flow ends here still signed out, exactly like any other visit to
+/// this screen.
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({this.prefillEmail, super.key});
+
+  /// The email to pre-fill, carried forward from a just-completed password
+  /// reset. Null on every other navigation to this screen.
+  final String? prefillEmail;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -24,6 +34,24 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final prefillEmail = widget.prefillEmail;
+    if (prefillEmail != null) {
+      _emailController.text = prefillEmail;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Password reset. Sign in with your new password.'),
+            ),
+          );
+        }
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -96,6 +124,12 @@ class _LoginScreenState extends State<LoginScreen> {
                       : const Text('Login'),
                 ),
                 const SizedBox(height: 8),
+                TextButton(
+                  onPressed: _submitting
+                      ? null
+                      : () => context.goNamed(AppRoute.forgotPassword),
+                  child: const Text('Forgot password?'),
+                ),
                 TextButton(
                   onPressed: _submitting
                       ? null

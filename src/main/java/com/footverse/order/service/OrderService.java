@@ -1,19 +1,24 @@
 package com.footverse.order.service;
 
+import java.util.Map;
+
 import org.springframework.data.domain.Pageable;
 
 import com.footverse.common.dto.PageResponse;
 import com.footverse.order.dto.AdminOrderDetailResponse;
 import com.footverse.order.dto.AdminOrderSummaryResponse;
 import com.footverse.order.dto.CouponPreviewRequest;
+import com.footverse.order.dto.DashboardResponse;
 import com.footverse.order.dto.CouponPreviewResponse;
 import com.footverse.order.dto.CouponResponse;
 import com.footverse.order.dto.CreateCouponRequest;
 import com.footverse.order.dto.OrderDetailResponse;
 import com.footverse.order.dto.OrderSummaryResponse;
+import com.footverse.order.dto.PaymentUrlResponse;
 import com.footverse.order.dto.PlaceOrderRequest;
 import com.footverse.order.dto.UpdateCouponRequest;
 import com.footverse.order.dto.UpdateOrderStatusRequest;
+import com.footverse.order.dto.VnpayReturnResponse;
 import com.footverse.order.entity.OrderStatus;
 
 /**
@@ -24,7 +29,9 @@ import com.footverse.order.entity.OrderStatus;
  *
  * <p>This sprint delivers the admin coupon CRUD, the read-only checkout preview, the transactional
  * checkout, the caller-scoped order queries, customer cancellation, the admin order-status machine,
- * and the admin order read surface (sprint-12-plan Task 01).</p>
+ * and the admin order read surface (sprint-12-plan Task 01). Sprint 13 Task 01 adds the ADMIN
+ * dashboard's aggregate read; Sprint 13 Task 09 adds the VNPay sandbox payment operations — no
+ * separate {@code StatisticsService} or {@code PaymentService} (architecture-spec §20).</p>
  */
 public interface OrderService {
 
@@ -241,4 +248,68 @@ public interface OrderService {
      *         when no order has the given id
      */
     AdminOrderDetailResponse adminGetOrder(Long id);
+
+    /**
+     * Assembles the ADMIN dashboard's core operating figures (dto-spec §15, Sprint 13 Task 01): total
+     * revenue and gross profit over {@code DELIVERED} orders, the order count by status (zero-filled
+     * to all five {@link OrderStatus} values), the trailing twelve-month revenue series (zero-filled),
+     * the top five best-selling products (folded from variant to product), and the five most recent
+     * orders. Every figure is computed on read from {@code orders} / {@code order_item} — nothing is
+     * stored, cached, or scheduled (architecture-spec §20). The endpoint takes no parameters and every
+     * window is fixed; there is no date range, filter, or comparison period.
+     *
+     * <p>{@code grossProfit} sums only lines with a known unit cost: a line whose
+     * {@code unitCostPrice} predates the Sprint 12 snapshot is <strong>excluded</strong>, never
+     * coerced to zero (Design Decision 2) — the response's {@code profitLinesWithCost} /
+     * {@code profitLinesTotal} report the resulting coverage.</p>
+     *
+     * @return the assembled dashboard response
+     */
+    DashboardResponse getDashboard();
+
+    /**
+     * Requests a signed VNPay sandbox payment URL for one of the caller's orders (business-rules →
+     * Payment; database-spec §10.17; Sprint 13 Task 09), ownership-checked (security-spec §7). The
+     * order must be {@code PENDING}, {@code UNPAID}, and {@code paymentMethod = VNPAY} — a {@code COD}
+     * order, an already-paid order, or a non-{@code PENDING} order are all rejected with the same code
+     * (error-spec §8.15). Any existing {@code PENDING} transaction for the order is superseded (marked
+     * {@code FAILED}) rather than reused, so a retried payment always creates a fresh transaction and
+     * the attempt history stays complete (database-spec §10.17, Design Decision 7).
+     *
+     * @param orderId the order to request payment for
+     * @return the signed payment URL, its transaction reference, and its expiry
+     * @throws com.footverse.common.exception.BusinessException {@code 403 ORDER_FORBIDDEN} when the
+     *         order exists but belongs to another user, or
+     *         {@code 409 PAYMENT_NOT_APPLICABLE} unless the order is {@code PENDING}, {@code UNPAID},
+     *         and {@code paymentMethod = VNPAY}
+     * @throws com.footverse.common.exception.ResourceNotFoundException {@code 404 ORDER_NOT_FOUND}
+     *         when no order has the given id
+     */
+    PaymentUrlResponse createPaymentUrl(Long orderId);
+
+    /**
+     * Processes the VNPay sandbox gateway's signed return callback (business-rules → Payment;
+     * Sprint 13 Task 09) — the <strong>only</strong> path allowed to set {@code paymentStatus = PAID}
+     * outside the frozen {@code DELIVERED} side effect. The signature is verified <strong>before any
+     * other parameter is read</strong> (Design Decision 6): an invalid, tampered, or absent
+     * {@code vnp_SecureHash} is {@code 400 PAYMENT_SIGNATURE_INVALID} and nothing is written. The
+     * transaction is then resolved by {@code vnp_TxnRef} ({@code 404
+     * PAYMENT_TRANSACTION_NOT_FOUND} when unknown). A transaction already resolved (a prior
+     * {@code SUCCESS} or {@code FAILED}) is a no-op replay: nothing is written and the same response
+     * is returned, making the handler safe to call twice. Otherwise the returned amount is re-checked
+     * against the transaction's stored amount ({@code 400 PAYMENT_AMOUNT_MISMATCH} when it differs,
+     * writing nothing); a matching amount then marks the transaction {@code SUCCESS} (recording
+     * {@code providerTxnNo}, {@code responseCode}, {@code paidAt}) and flips the order's
+     * {@code paymentStatus} to {@code PAID}, or marks it {@code FAILED} and leaves the order untouched.
+     *
+     * @param params the gateway's {@code vnp_*} return parameters, including {@code vnp_SecureHash}
+     * @return the payment outcome for the resolved order
+     * @throws com.footverse.common.exception.BusinessException {@code 400 PAYMENT_SIGNATURE_INVALID}
+     *         for a signature that does not verify, or {@code 400 PAYMENT_AMOUNT_MISMATCH} for a
+     *         returned amount that does not match the stored transaction
+     * @throws com.footverse.common.exception.ResourceNotFoundException
+     *         {@code 404 PAYMENT_TRANSACTION_NOT_FOUND} when no transaction has the given
+     *         {@code vnp_TxnRef}
+     */
+    VnpayReturnResponse handleVnpayReturn(Map<String, String> params);
 }

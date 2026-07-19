@@ -2,7 +2,6 @@ import { createBrowserRouter } from 'react-router-dom';
 
 import { httpClient } from '@/core/api/http-client';
 import { AppShell } from '@/core/components/app-shell';
-import { SectionPlaceholder } from '@/core/components/section-placeholder';
 import { BrandFormPage } from '@/features/brand/pages/brand-form-page';
 import { BrandListPage } from '@/features/brand/pages/brand-list-page';
 import { BrandRepository } from '@/features/brand/repositories/brand-repository';
@@ -12,6 +11,8 @@ import { CategoryRepository } from '@/features/category/repositories/category-re
 import { CouponFormPage } from '@/features/coupon/pages/coupon-form-page';
 import { CouponListPage } from '@/features/coupon/pages/coupon-list-page';
 import { CouponRepository } from '@/features/coupon/repositories/coupon-repository';
+import { DashboardPage } from '@/features/dashboard/pages/dashboard-page';
+import { DashboardRepository } from '@/features/dashboard/repositories/dashboard-repository';
 import { OrderDetailPage } from '@/features/order/pages/order-detail-page';
 import { OrderListPage } from '@/features/order/pages/order-list-page';
 import { OrderRepository } from '@/features/order/repositories/order-repository';
@@ -26,6 +27,7 @@ import { ROUTES } from './routes';
 // Composition root: constructed once against the single Axios instance and
 // injected into each feature's pages as a prop — the React analog of
 // Flutter's `app_router.dart` receiving `XxxRepository(dio)` from `main.dart`.
+const dashboardRepository = new DashboardRepository(httpClient);
 const brandRepository = new BrandRepository(httpClient);
 const categoryRepository = new CategoryRepository(httpClient);
 const productRepository = new ProductRepository(httpClient);
@@ -47,15 +49,8 @@ export const router = createBrowserRouter([
       </AdminGuard>
     ),
     children: [
-      {
-        index: true,
-        element: (
-          <SectionPlaceholder
-            title="FootVerse Admin"
-            description="Select a section from the navigation to begin."
-          />
-        ),
-      },
+      { index: true, element: <DashboardPage repository={dashboardRepository} /> },
+      { path: ROUTES.dashboard, element: <DashboardPage repository={dashboardRepository} /> },
       {
         path: ROUTES.brands,
         children: [

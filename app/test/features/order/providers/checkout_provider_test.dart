@@ -285,6 +285,12 @@ void main() {
       await provider.load();
     }
 
+    test('defaults the payment method to COD', () async {
+      await loadReady();
+
+      expect(provider.paymentMethod, PaymentMethod.cod);
+    });
+
     test('places the order and returns the created detail', () async {
       await loadReady();
       when(orderRepository.placeOrder(any)).thenAnswer((_) async => _order());
@@ -299,7 +305,31 @@ void main() {
       expect(request.addressId, 9);
       expect(request.couponCode, isNull);
       expect(request.note, isNull);
+      // COD (the default) omits paymentMethod entirely — never "COD", never an
+      // explicit null value sent as a key (Sprint 13 Task 10).
+      expect(request.paymentMethod, isNull);
       expect(provider.isPlacing, isFalse);
+    });
+
+    test('sends paymentMethod VNPAY once VNPay is selected, and reverts to '
+        'omitting it once COD is reselected', () async {
+      await loadReady();
+      when(orderRepository.placeOrder(any)).thenAnswer((_) async => _order());
+
+      provider.selectPaymentMethod(PaymentMethod.vnpay);
+      expect(provider.paymentMethod, PaymentMethod.vnpay);
+      await provider.placeOrder();
+      final vnpayRequest = verify(
+        orderRepository.placeOrder(captureAny),
+      ).captured.single;
+      expect(vnpayRequest.paymentMethod, PaymentMethod.vnpay);
+
+      provider.selectPaymentMethod(PaymentMethod.cod);
+      await provider.placeOrder();
+      final codRequest = verify(
+        orderRepository.placeOrder(captureAny),
+      ).captured.single;
+      expect(codRequest.paymentMethod, isNull);
     });
 
     test('sends the applied coupon and the note', () async {

@@ -6,6 +6,7 @@ import '../../address/repositories/address_repository.dart';
 import '../models/coupon_preview_request.dart';
 import '../models/coupon_preview_response.dart';
 import '../models/order_detail_response.dart';
+import '../models/payment_method.dart';
 import '../models/place_order_request.dart';
 import '../repositories/order_repository.dart';
 
@@ -49,6 +50,7 @@ class CheckoutProvider extends ChangeNotifier {
   CouponPreviewResponse? _preview;
   String? _appliedCouponCode;
   String _note = '';
+  PaymentMethod _paymentMethod = PaymentMethod.cod;
 
   bool _previewing = false;
   bool _placing = false;
@@ -71,6 +73,10 @@ class CheckoutProvider extends ChangeNotifier {
 
   /// The applied coupon code, or null when none is applied.
   String? get appliedCouponCode => _appliedCouponCode;
+
+  /// The selected payment method (Sprint 13 Task 10), defaulting to
+  /// [PaymentMethod.cod].
+  PaymentMethod get paymentMethod => _paymentMethod;
 
   /// True while a preview (`POST /coupons/validate`) is in flight.
   bool get isPreviewing => _previewing;
@@ -126,6 +132,13 @@ class CheckoutProvider extends ChangeNotifier {
     _note = value;
   }
 
+  /// Selects the payment method (the checkout screen's COD / VNPay selector,
+  /// Sprint 13 Task 10).
+  void selectPaymentMethod(PaymentMethod method) {
+    _paymentMethod = method;
+    _safeNotify();
+  }
+
   /// Applies a coupon by re-pricing the selected items with [code].
   ///
   /// On a `COUPON_*` rejection the [AppException] is rethrown (never swallowed) so
@@ -153,13 +166,20 @@ class CheckoutProvider extends ChangeNotifier {
     }
   }
 
-  /// Places the order from the selected items, address, coupon, and note.
+  /// Places the order from the selected items, address, coupon, note, and
+  /// payment method.
   ///
   /// Returns the created [OrderDetailResponse] on success, or null when the call
   /// is not currently allowed (no address, or a preview / place already in
   /// flight — single-flight). Rethrows the [AppException] on a server rejection
   /// (`PRODUCT_VARIANT_*`, `CART_ITEM_*`, `ADDRESS_*`, `COUPON_*`) so the screen
   /// renders it; no order is placed and the state is unchanged.
+  ///
+  /// [PlaceOrderRequest.paymentMethod] is left unset for [PaymentMethod.cod]
+  /// (Sprint 13 Task 10, sprint-13-plan Design Notes — the server already
+  /// defaults an absent value to `COD`) so a `COD` checkout serializes a
+  /// request byte-for-byte identical to before this sprint; only an explicit
+  /// `VNPAY` choice is ever sent.
   Future<OrderDetailResponse?> placeOrder() async {
     final addressId = _selectedAddressId;
     if (_placing || _previewing || addressId == null) {
@@ -175,6 +195,9 @@ class CheckoutProvider extends ChangeNotifier {
           addressId: addressId,
           couponCode: _appliedCouponCode,
           note: note.isEmpty ? null : note,
+          paymentMethod: _paymentMethod == PaymentMethod.cod
+              ? null
+              : _paymentMethod,
         ),
       );
     } finally {

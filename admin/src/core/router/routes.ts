@@ -16,6 +16,7 @@
 export const ROUTES = {
   root: '/',
   login: '/login',
+  dashboard: '/dashboard',
   brands: '/brands',
   brandForm: '/brands/form',
   categories: '/categories',

@@ -36,6 +36,7 @@ import com.footverse.common.security.RestAuthenticationEntryPoint;
 import com.footverse.order.dto.OrderDetailResponse;
 import com.footverse.order.dto.OrderItemResponse;
 import com.footverse.order.dto.OrderSummaryResponse;
+import com.footverse.order.dto.PaymentUrlResponse;
 import com.footverse.order.entity.OrderStatus;
 import com.footverse.order.entity.PaymentMethod;
 import com.footverse.order.entity.PaymentStatus;
@@ -48,12 +49,13 @@ import org.springframework.http.HttpStatus;
 /**
  * Web-slice tests for the {@link OrderController}: the customer order queries ({@code GET /orders},
  * {@code GET /orders/{id}}), checkout ({@code POST /orders}), cancellation
- * ({@code POST /orders/{id}/cancel}), and the admin status update ({@code PATCH /orders/{id}/status}).
- * They assert the success envelopes (including the order-item {@code color} snapshot), request-body
- * validation, the role denial for the wrong token (order paths are CUSTOMER-only, the status update
- * ADMIN-only), the anonymous {@code 401}, and the ownership / not-found / conflict business errors
- * rendered through the standard envelope. The security filter chain is imported; the service is
- * mocked, so no business rule runs here.
+ * ({@code POST /orders/{id}/cancel}), the VNPay sandbox payment-URL request
+ * ({@code POST /orders/{id}/payment}, Sprint 13 Task 09), and the admin status update
+ * ({@code PATCH /orders/{id}/status}). They assert the success envelopes (including the order-item
+ * {@code color} snapshot), request-body validation, the role denial for the wrong token (order paths
+ * are CUSTOMER-only, the status update ADMIN-only), the anonymous {@code 401}, and the ownership /
+ * not-found / conflict business errors rendered through the standard envelope. The security filter
+ * chain is imported; the service is mocked, so no business rule runs here.
  */
 @WebMvcTest(OrderController.class)
 @Import({SecurityConfig.class, JwtUtil.class, RestAuthenticationEntryPoint.class, RestAccessDeniedHandler.class})
@@ -384,6 +386,93 @@ class OrderControllerTest {
                 .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
 
         verify(orderService, never()).cancelMyOrder(any());
+    }
+
+    // ----- POST /orders/{id}/payment (Sprint 13 Task 09) -----
+
+    /**
+     * {@code POST /orders/{id}/payment} as a CUSTOMER returns {@code 200 OK} with the signed payment
+     * URL.
+     */
+    @Test
+    void createPaymentUrlAsCustomerReturns200() throws Exception {
+        when(orderService.createPaymentUrl(9L)).thenReturn(new PaymentUrlResponse(
+                "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_Amount=100", "VNP-9",
+                LocalDateTime.now().plusMinutes(15)));
+
+        mockMvc.perform(post("/api/v1/orders/9/payment").header(HttpHeaders.AUTHORIZATION, customerToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.txnRef").value("VNP-9"))
+                .andExpect(jsonPath("$.data.paymentUrl").isNotEmpty());
+    }
+
+    /**
+     * A {@code COD} order, an already-paid order, or a non-{@code PENDING} order all surface the
+     * service's {@code 409 PAYMENT_NOT_APPLICABLE} through the standard envelope.
+     */
+    @Test
+    void createPaymentUrlNotApplicableReturns409() throws Exception {
+        when(orderService.createPaymentUrl(9L)).thenThrow(new BusinessException(HttpStatus.CONFLICT,
+                "PAYMENT_NOT_APPLICABLE", "Payment is not applicable for this order"));
+
+        mockMvc.perform(post("/api/v1/orders/9/payment").header(HttpHeaders.AUTHORIZATION, customerToken()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("PAYMENT_NOT_APPLICABLE"));
+    }
+
+    /**
+     * Requesting a payment URL for another user's order surfaces the service's
+     * {@code 403 ORDER_FORBIDDEN}.
+     */
+    @Test
+    void createPaymentUrlOfAnotherUsersOrderReturns403() throws Exception {
+        when(orderService.createPaymentUrl(9L)).thenThrow(new BusinessException(HttpStatus.FORBIDDEN,
+                "ORDER_FORBIDDEN", "You cannot access this order"));
+
+        mockMvc.perform(post("/api/v1/orders/9/payment").header(HttpHeaders.AUTHORIZATION, customerToken()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("ORDER_FORBIDDEN"));
+    }
+
+    /**
+     * Requesting a payment URL for an unknown order surfaces the service's {@code 404
+     * ORDER_NOT_FOUND}.
+     */
+    @Test
+    void createPaymentUrlOfUnknownOrderReturns404() throws Exception {
+        when(orderService.createPaymentUrl(9L))
+                .thenThrow(new ResourceNotFoundException("ORDER_NOT_FOUND", "Order not found"));
+
+        mockMvc.perform(post("/api/v1/orders/9/payment").header(HttpHeaders.AUTHORIZATION, customerToken()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("ORDER_NOT_FOUND"));
+    }
+
+    /**
+     * {@code POST /orders/{id}/payment} with an ADMIN token is denied the enveloped {@code 403}: the
+     * payment-URL request is CUSTOMER-only, exactly like every other customer order path
+     * (security-spec §6).
+     */
+    @Test
+    void createPaymentUrlAsAdminReturns403() throws Exception {
+        mockMvc.perform(post("/api/v1/orders/9/payment").header(HttpHeaders.AUTHORIZATION, adminToken()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
+
+        verify(orderService, never()).createPaymentUrl(any());
+    }
+
+    /**
+     * An anonymous {@code POST /orders/{id}/payment} is denied the enveloped {@code 401}.
+     */
+    @Test
+    void createPaymentUrlAnonymouslyReturns401() throws Exception {
+        mockMvc.perform(post("/api/v1/orders/9/payment"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("UNAUTHORIZED"));
+
+        verify(orderService, never()).createPaymentUrl(any());
     }
 
     // ----- PATCH /orders/{id}/status (admin) -----

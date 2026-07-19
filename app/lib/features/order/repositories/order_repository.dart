@@ -7,21 +7,24 @@ import '../models/coupon_preview_request.dart';
 import '../models/coupon_preview_response.dart';
 import '../models/order_detail_response.dart';
 import '../models/order_summary_response.dart';
+import '../models/payment_url_response.dart';
 import '../models/place_order_request.dart';
 
-/// The typed client of the five frozen customer order/checkout endpoints
+/// The typed client of the customer order/checkout/payment endpoints
 /// (dto-spec §20). The coupon-preview call lives here because the coupon concern
 /// is owned by the order module (architecture-spec §4) — there is no separate
-/// `CouponRepository`.
+/// `CouponRepository`; the VNPay payment-URL request lives here for the same
+/// reason — payment is an order concern, not a separate `PaymentRepository`
+/// (Sprint 13 Task 10).
 ///
 /// It only calls the API, unwraps the [ApiResponse] envelope, and returns the
 /// typed payload — throwing [AppException] on failure (the injected [Dio]'s
 /// `ErrorInterceptor` has already mapped the transport error, and its
 /// `AuthInterceptor` has attached the CUSTOMER bearer). It holds no business
 /// logic and touches no storage or navigation, so every enveloped business error
-/// (the `COUPON_*`, `PRODUCT_VARIANT_*`, `CART_ITEM_*`, `ADDRESS_*`, and `ORDER_*`
-/// codes of error-spec §8.6/§8.8/§8.9/§8.10/§8.11) propagates unchanged as an
-/// [AppException] carrying the registry code.
+/// (the `COUPON_*`, `PRODUCT_VARIANT_*`, `CART_ITEM_*`, `ADDRESS_*`, `ORDER_*`,
+/// and `PAYMENT_*` codes of error-spec §8.6/§8.8/§8.9/§8.10/§8.11/§8.15)
+/// propagates unchanged as an [AppException] carrying the registry code.
 class OrderRepository {
   const OrderRepository(this._dio);
 
@@ -107,6 +110,24 @@ class OrderRepository {
         '$_ordersPath/$id/cancel',
       );
       return _unwrapOrder(response);
+    } on DioException catch (exception) {
+      throw _asAppException(exception);
+    }
+  }
+
+  /// `POST /orders/{id}/payment` — request a signed VNPay sandbox payment URL
+  /// for one of the caller's `PENDING`/`UNPAID`/`VNPAY` orders (Sprint 13
+  /// Task 10).
+  Future<PaymentUrlResponse> createPaymentUrl(int orderId) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '$_ordersPath/$orderId/payment',
+      );
+      final envelope = ApiResponse<PaymentUrlResponse>.fromJson(
+        response.data!,
+        (json) => PaymentUrlResponse.fromJson(json! as Map<String, dynamic>),
+      );
+      return envelope.data!;
     } on DioException catch (exception) {
       throw _asAppException(exception);
     }

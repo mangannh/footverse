@@ -220,6 +220,25 @@ class UserServiceImplTest {
                 .hasFieldOrPropertyWithValue("httpStatus", HttpStatus.CONFLICT);
     }
 
+    // ----- Reset password (Sprint 13 Task 05) -----
+
+    /**
+     * {@code resetPassword} stores the already-encoded password on the given user and persists it —
+     * unlike {@code changePassword}, the caller is passed in directly rather than resolved through
+     * {@link CurrentUserProvider}, since the anonymous forgot-password flow has no authenticated
+     * session.
+     */
+    @Test
+    void resetPasswordStoresGivenEncodedPasswordOnGivenUser() {
+        User user = caller();
+
+        userService.resetPassword(user, "already-encoded-hash");
+
+        assertThat(user.getPassword()).isEqualTo("already-encoded-hash");
+        verify(userRepository).save(user);
+        verify(currentUserProvider, never()).getCurrentUser();
+    }
+
     // ----- Change password -----
 
     /**

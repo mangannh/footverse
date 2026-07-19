@@ -38,6 +38,17 @@ spring:
       # NoHandlerFoundException instead of being handled as a missing static resource.
       add-mappings: false
 
+  # Externalized mail settings (Sprint 13 Task 04). No credential is committed: host, port,
+  # username, and password all come from environment variables, each defaulting to blank/a safe
+  # value so a local run with mail disabled (the default) never fails to start for lack of a
+  # mail server. These are read by Spring Boot's own MailSenderAutoConfiguration;
+  # footverse.mail.enabled below (not these) decides whether SmtpEmailSender is ever invoked.
+  mail:
+    host: ${FOOTVERSE_MAIL_HOST:}
+    port: ${FOOTVERSE_MAIL_PORT:587}
+    username: ${FOOTVERSE_MAIL_USERNAME:}
+    password: ${FOOTVERSE_MAIL_PASSWORD:}
+
 # Externalized JWT settings. Secrets are never hardcoded in source code; the value is
 # supplied via the FOOTVERSE_JWT_SECRET environment variable (the default below is for
 # local development only and must be overridden outside development).
@@ -48,3 +59,36 @@ footverse:
     access-token-ttl-seconds: 900
     # Refresh-token time-to-live in seconds (30 days).
     refresh-token-ttl-seconds: 2592000
+
+  # Mail sending (Sprint 13 Task 04). Disabled by default -- LoggingEmailSender is then the
+  # active bean and no real email is ever sent, in every environment that does not explicitly
+  # opt in. SmtpEmailSender activates only when this is explicitly "true".
+  mail:
+    enabled: ${FOOTVERSE_MAIL_ENABLED:false}
+    from: ${FOOTVERSE_MAIL_FROM:no-reply@footverse.local}
+
+  # Password-reset one-time-code lifecycle (Sprint 13 Task 04; consumed starting Task 05).
+  password-reset:
+    # One-time code validity window in seconds (10 minutes).
+    otp-ttl-seconds: 600
+    # Verified reset-token validity window in seconds (15 minutes).
+    reset-token-ttl-seconds: 900
+    # Number of wrong-code attempts allowed before the row is invalidated.
+    max-attempts: 5
+
+  # VNPay sandbox payment (Sprint 13 Task 08; consumed starting Task 09). No credential is
+  # committed -- tmn-code and hash-secret have no default and, exactly like
+  # FOOTVERSE_JWT_SECRET, must be supplied via environment variable outside development. The
+  # remaining values are non-secret VNPay sandbox protocol constants and endpoints, defaulted
+  # for local development but still fully overridable via FOOTVERSE_VNPAY_*.
+  vnpay:
+    tmn-code: ${FOOTVERSE_VNPAY_TMN_CODE}
+    hash-secret: ${FOOTVERSE_VNPAY_HASH_SECRET}
+    pay-url: ${FOOTVERSE_VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
+    return-url: ${FOOTVERSE_VNPAY_RETURN_URL:http://localhost:8080/api/v1/payments/vnpay/return}
+    version: ${FOOTVERSE_VNPAY_VERSION:2.1.0}
+    command: ${FOOTVERSE_VNPAY_COMMAND:pay}
+    currency: ${FOOTVERSE_VNPAY_CURRENCY:VND}
+    locale: ${FOOTVERSE_VNPAY_LOCALE:vn}
+    # Payment-URL validity window in minutes.
+    expire-minutes: ${FOOTVERSE_VNPAY_EXPIRE_MINUTES:15}

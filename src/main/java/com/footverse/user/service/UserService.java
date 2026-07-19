@@ -72,6 +72,17 @@ public interface UserService {
     UserResponse changeEmail(ChangeEmailRequest request);
 
     /**
+     * Sets a new password for the given user, bypassing {@code CurrentUserProvider} (Sprint 13
+     * Task 05). Used exclusively by the anonymous forgot-password flow, where the caller has
+     * already been resolved from a verified reset token rather than an authenticated session; every
+     * other entry point resolves its own caller and must keep doing so.
+     *
+     * @param user            the user to update, already resolved by the caller
+     * @param encodedPassword the already-BCrypt-encoded new password
+     */
+    void resetPassword(User user, String encodedPassword);
+
+    /**
      * Checks whether an account with the given email already exists.
      *
      * @param email the email to check

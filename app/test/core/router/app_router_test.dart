@@ -8,9 +8,13 @@ import 'package:footverse/features/address/repositories/address_repository.dart'
 import 'package:footverse/features/auth/models/role.dart';
 import 'package:footverse/features/auth/models/user_response.dart';
 import 'package:footverse/features/auth/providers/auth_provider.dart';
+import 'package:footverse/features/auth/providers/password_reset_provider.dart';
 import 'package:footverse/features/auth/repositories/auth_repository.dart';
 import 'package:footverse/features/auth/screens/account_screen.dart';
+import 'package:footverse/features/auth/screens/forgot_password_screen.dart';
 import 'package:footverse/features/auth/screens/login_screen.dart';
+import 'package:footverse/features/auth/screens/reset_password_screen.dart';
+import 'package:footverse/features/auth/screens/verify_reset_otp_screen.dart';
 import 'package:footverse/features/cart/providers/cart_provider.dart';
 import 'package:footverse/features/cart/repositories/cart_repository.dart';
 import 'package:footverse/features/order/models/coupon_preview_response.dart';
@@ -48,11 +52,17 @@ import 'app_router_test.mocks.dart';
 /// One signed-in session and the router driving it, returned so a test can
 /// navigate and later flip the auth state.
 class _Harness {
-  const _Harness(this.router, this.authProvider, this.tokenStorage);
+  const _Harness(
+    this.router,
+    this.authProvider,
+    this.tokenStorage,
+    this.authRepository,
+  );
 
   final GoRouter router;
   final AuthProvider authProvider;
   final TokenStorage tokenStorage;
+  final AuthRepository authRepository;
 }
 
 PageResponse<ProductSummaryResponse> _emptyProductPage() =>
@@ -115,7 +125,8 @@ OrderDetailResponse _orderDetail(int id) => OrderDetailResponse(
 Future<_Harness> _pumpApp(WidgetTester tester, {required bool signedIn}) async {
   SharedPreferences.setMockInitialValues(<String, Object>{});
   final tokenStorage = TokenStorage(await SharedPreferences.getInstance());
-  final authProvider = AuthProvider(MockAuthRepository(), tokenStorage);
+  final authRepository = MockAuthRepository();
+  final authProvider = AuthProvider(authRepository, tokenStorage);
 
   final productRepository = MockProductRepository();
   when(
@@ -172,6 +183,7 @@ Future<_Harness> _pumpApp(WidgetTester tester, {required bool signedIn}) async {
 
   final router = createAppRouter(
     authProvider,
+    authRepository,
     productRepository,
     categoryRepository,
     brandRepository,
@@ -197,7 +209,7 @@ Future<_Harness> _pumpApp(WidgetTester tester, {required bool signedIn}) async {
   );
   await tester.pumpAndSettle();
 
-  return _Harness(router, authProvider, tokenStorage);
+  return _Harness(router, authProvider, tokenStorage, authRepository);
 }
 
 @GenerateNiceMocks([
@@ -365,5 +377,65 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(ProfileScreen), findsOneWidget);
     expect(find.byType(ChangeEmailScreen), findsNothing);
+  });
+
+  group('password-reset routes (sprint-13-plan Task 07)', () {
+    testWidgets('a signed-out user reaches forgot-password (no redirect)', (
+      tester,
+    ) async {
+      final harness = await _pumpApp(tester, signedIn: false);
+
+      harness.router.goNamed(AppRoute.forgotPassword);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ForgotPasswordScreen), findsOneWidget);
+      expect(find.byType(LoginScreen), findsNothing);
+    });
+
+    testWidgets('a signed-out user reaches verify-reset-otp (no redirect)', (
+      tester,
+    ) async {
+      final harness = await _pumpApp(tester, signedIn: false);
+      final provider = PasswordResetProvider(harness.authRepository);
+
+      harness.router.goNamed(
+        AppRoute.verifyResetOtp,
+        extra: (provider, 'user@example.com'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(VerifyResetOtpScreen), findsOneWidget);
+      expect(find.byType(LoginScreen), findsNothing);
+    });
+
+    testWidgets('a signed-out user reaches reset-password (no redirect)', (
+      tester,
+    ) async {
+      final harness = await _pumpApp(tester, signedIn: false);
+      final provider = PasswordResetProvider(harness.authRepository);
+
+      harness.router.goNamed(
+        AppRoute.resetPassword,
+        extra: (provider, 'user@example.com'),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ResetPasswordScreen), findsOneWidget);
+      expect(find.byType(LoginScreen), findsNothing);
+    });
+
+    testWidgets('the login screen opens forgot-password by name', (
+      tester,
+    ) async {
+      final harness = await _pumpApp(tester, signedIn: false);
+
+      harness.router.goNamed(AppRoute.login);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Forgot password?'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ForgotPasswordScreen), findsOneWidget);
+    });
   });
 }

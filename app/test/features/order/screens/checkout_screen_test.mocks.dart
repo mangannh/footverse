@@ -3,31 +3,33 @@
 // Do not manually edit this file.
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
-import 'dart:async' as _i8;
+import 'dart:async' as _i9;
 
-import 'package:footverse/features/address/models/address_request.dart' as _i13;
-import 'package:footverse/features/address/models/address_response.dart' as _i5;
+import 'package:footverse/features/address/models/address_request.dart' as _i14;
+import 'package:footverse/features/address/models/address_response.dart' as _i6;
 import 'package:footverse/features/address/repositories/address_repository.dart'
-    as _i12;
+    as _i13;
 import 'package:footverse/features/cart/models/add_cart_item_request.dart'
-    as _i15;
-import 'package:footverse/features/cart/models/cart_response.dart' as _i6;
-import 'package:footverse/features/cart/models/update_cart_item_request.dart'
     as _i16;
+import 'package:footverse/features/cart/models/cart_response.dart' as _i7;
+import 'package:footverse/features/cart/models/update_cart_item_request.dart'
+    as _i17;
 import 'package:footverse/features/cart/repositories/cart_repository.dart'
-    as _i14;
+    as _i15;
 import 'package:footverse/features/order/models/coupon_preview_request.dart'
-    as _i9;
+    as _i10;
 import 'package:footverse/features/order/models/coupon_preview_response.dart'
     as _i2;
 import 'package:footverse/features/order/models/order_detail_response.dart'
     as _i3;
 import 'package:footverse/features/order/models/order_summary_response.dart'
-    as _i11;
+    as _i12;
+import 'package:footverse/features/order/models/payment_url_response.dart'
+    as _i5;
 import 'package:footverse/features/order/models/place_order_request.dart'
-    as _i10;
+    as _i11;
 import 'package:footverse/features/order/repositories/order_repository.dart'
-    as _i7;
+    as _i8;
 import 'package:footverse/shared/models/page_response.dart' as _i4;
 import 'package:mockito/mockito.dart' as _i1;
 
@@ -64,75 +66,81 @@ class _FakePageResponse_2<T> extends _i1.SmartFake
     : super(parent, parentInvocation);
 }
 
-class _FakeAddressResponse_3 extends _i1.SmartFake
-    implements _i5.AddressResponse {
-  _FakeAddressResponse_3(Object parent, Invocation parentInvocation)
+class _FakePaymentUrlResponse_3 extends _i1.SmartFake
+    implements _i5.PaymentUrlResponse {
+  _FakePaymentUrlResponse_3(Object parent, Invocation parentInvocation)
     : super(parent, parentInvocation);
 }
 
-class _FakeCartResponse_4 extends _i1.SmartFake implements _i6.CartResponse {
-  _FakeCartResponse_4(Object parent, Invocation parentInvocation)
+class _FakeAddressResponse_4 extends _i1.SmartFake
+    implements _i6.AddressResponse {
+  _FakeAddressResponse_4(Object parent, Invocation parentInvocation)
+    : super(parent, parentInvocation);
+}
+
+class _FakeCartResponse_5 extends _i1.SmartFake implements _i7.CartResponse {
+  _FakeCartResponse_5(Object parent, Invocation parentInvocation)
     : super(parent, parentInvocation);
 }
 
 /// A class which mocks [OrderRepository].
 ///
 /// See the documentation for Mockito's code generation for more information.
-class MockOrderRepository extends _i1.Mock implements _i7.OrderRepository {
+class MockOrderRepository extends _i1.Mock implements _i8.OrderRepository {
   @override
-  _i8.Future<_i2.CouponPreviewResponse> previewCoupon(
-    _i9.CouponPreviewRequest? request,
+  _i9.Future<_i2.CouponPreviewResponse> previewCoupon(
+    _i10.CouponPreviewRequest? request,
   ) =>
       (super.noSuchMethod(
             Invocation.method(#previewCoupon, [request]),
-            returnValue: _i8.Future<_i2.CouponPreviewResponse>.value(
+            returnValue: _i9.Future<_i2.CouponPreviewResponse>.value(
               _FakeCouponPreviewResponse_0(
                 this,
                 Invocation.method(#previewCoupon, [request]),
               ),
             ),
             returnValueForMissingStub:
-                _i8.Future<_i2.CouponPreviewResponse>.value(
+                _i9.Future<_i2.CouponPreviewResponse>.value(
                   _FakeCouponPreviewResponse_0(
                     this,
                     Invocation.method(#previewCoupon, [request]),
                   ),
                 ),
           )
-          as _i8.Future<_i2.CouponPreviewResponse>);
+          as _i9.Future<_i2.CouponPreviewResponse>);
 
   @override
-  _i8.Future<_i3.OrderDetailResponse> placeOrder(
-    _i10.PlaceOrderRequest? request,
+  _i9.Future<_i3.OrderDetailResponse> placeOrder(
+    _i11.PlaceOrderRequest? request,
   ) =>
       (super.noSuchMethod(
             Invocation.method(#placeOrder, [request]),
-            returnValue: _i8.Future<_i3.OrderDetailResponse>.value(
+            returnValue: _i9.Future<_i3.OrderDetailResponse>.value(
               _FakeOrderDetailResponse_1(
                 this,
                 Invocation.method(#placeOrder, [request]),
               ),
             ),
             returnValueForMissingStub:
-                _i8.Future<_i3.OrderDetailResponse>.value(
+                _i9.Future<_i3.OrderDetailResponse>.value(
                   _FakeOrderDetailResponse_1(
                     this,
                     Invocation.method(#placeOrder, [request]),
                   ),
                 ),
           )
-          as _i8.Future<_i3.OrderDetailResponse>);
+          as _i9.Future<_i3.OrderDetailResponse>);
 
   @override
-  _i8.Future<_i4.PageResponse<_i11.OrderSummaryResponse>> getMyOrders({
+  _i9.Future<_i4.PageResponse<_i12.OrderSummaryResponse>> getMyOrders({
     int? page = 0,
     int? size = 20,
   }) =>
       (super.noSuchMethod(
             Invocation.method(#getMyOrders, [], {#page: page, #size: size}),
             returnValue:
-                _i8.Future<_i4.PageResponse<_i11.OrderSummaryResponse>>.value(
-                  _FakePageResponse_2<_i11.OrderSummaryResponse>(
+                _i9.Future<_i4.PageResponse<_i12.OrderSummaryResponse>>.value(
+                  _FakePageResponse_2<_i12.OrderSummaryResponse>(
                     this,
                     Invocation.method(#getMyOrders, [], {
                       #page: page,
@@ -141,8 +149,8 @@ class MockOrderRepository extends _i1.Mock implements _i7.OrderRepository {
                   ),
                 ),
             returnValueForMissingStub:
-                _i8.Future<_i4.PageResponse<_i11.OrderSummaryResponse>>.value(
-                  _FakePageResponse_2<_i11.OrderSummaryResponse>(
+                _i9.Future<_i4.PageResponse<_i12.OrderSummaryResponse>>.value(
+                  _FakePageResponse_2<_i12.OrderSummaryResponse>(
                     this,
                     Invocation.method(#getMyOrders, [], {
                       #page: page,
@@ -151,186 +159,205 @@ class MockOrderRepository extends _i1.Mock implements _i7.OrderRepository {
                   ),
                 ),
           )
-          as _i8.Future<_i4.PageResponse<_i11.OrderSummaryResponse>>);
+          as _i9.Future<_i4.PageResponse<_i12.OrderSummaryResponse>>);
 
   @override
-  _i8.Future<_i3.OrderDetailResponse> getMyOrder(int? id) =>
+  _i9.Future<_i3.OrderDetailResponse> getMyOrder(int? id) =>
       (super.noSuchMethod(
             Invocation.method(#getMyOrder, [id]),
-            returnValue: _i8.Future<_i3.OrderDetailResponse>.value(
+            returnValue: _i9.Future<_i3.OrderDetailResponse>.value(
               _FakeOrderDetailResponse_1(
                 this,
                 Invocation.method(#getMyOrder, [id]),
               ),
             ),
             returnValueForMissingStub:
-                _i8.Future<_i3.OrderDetailResponse>.value(
+                _i9.Future<_i3.OrderDetailResponse>.value(
                   _FakeOrderDetailResponse_1(
                     this,
                     Invocation.method(#getMyOrder, [id]),
                   ),
                 ),
           )
-          as _i8.Future<_i3.OrderDetailResponse>);
+          as _i9.Future<_i3.OrderDetailResponse>);
 
   @override
-  _i8.Future<_i3.OrderDetailResponse> cancelOrder(int? id) =>
+  _i9.Future<_i3.OrderDetailResponse> cancelOrder(int? id) =>
       (super.noSuchMethod(
             Invocation.method(#cancelOrder, [id]),
-            returnValue: _i8.Future<_i3.OrderDetailResponse>.value(
+            returnValue: _i9.Future<_i3.OrderDetailResponse>.value(
               _FakeOrderDetailResponse_1(
                 this,
                 Invocation.method(#cancelOrder, [id]),
               ),
             ),
             returnValueForMissingStub:
-                _i8.Future<_i3.OrderDetailResponse>.value(
+                _i9.Future<_i3.OrderDetailResponse>.value(
                   _FakeOrderDetailResponse_1(
                     this,
                     Invocation.method(#cancelOrder, [id]),
                   ),
                 ),
           )
-          as _i8.Future<_i3.OrderDetailResponse>);
+          as _i9.Future<_i3.OrderDetailResponse>);
+
+  @override
+  _i9.Future<_i5.PaymentUrlResponse> createPaymentUrl(int? orderId) =>
+      (super.noSuchMethod(
+            Invocation.method(#createPaymentUrl, [orderId]),
+            returnValue: _i9.Future<_i5.PaymentUrlResponse>.value(
+              _FakePaymentUrlResponse_3(
+                this,
+                Invocation.method(#createPaymentUrl, [orderId]),
+              ),
+            ),
+            returnValueForMissingStub: _i9.Future<_i5.PaymentUrlResponse>.value(
+              _FakePaymentUrlResponse_3(
+                this,
+                Invocation.method(#createPaymentUrl, [orderId]),
+              ),
+            ),
+          )
+          as _i9.Future<_i5.PaymentUrlResponse>);
 }
 
 /// A class which mocks [AddressRepository].
 ///
 /// See the documentation for Mockito's code generation for more information.
-class MockAddressRepository extends _i1.Mock implements _i12.AddressRepository {
+class MockAddressRepository extends _i1.Mock implements _i13.AddressRepository {
   @override
-  _i8.Future<List<_i5.AddressResponse>> getAddresses() =>
+  _i9.Future<List<_i6.AddressResponse>> getAddresses() =>
       (super.noSuchMethod(
             Invocation.method(#getAddresses, []),
-            returnValue: _i8.Future<List<_i5.AddressResponse>>.value(
-              <_i5.AddressResponse>[],
+            returnValue: _i9.Future<List<_i6.AddressResponse>>.value(
+              <_i6.AddressResponse>[],
             ),
             returnValueForMissingStub:
-                _i8.Future<List<_i5.AddressResponse>>.value(
-                  <_i5.AddressResponse>[],
+                _i9.Future<List<_i6.AddressResponse>>.value(
+                  <_i6.AddressResponse>[],
                 ),
           )
-          as _i8.Future<List<_i5.AddressResponse>>);
+          as _i9.Future<List<_i6.AddressResponse>>);
 
   @override
-  _i8.Future<_i5.AddressResponse> createAddress(_i13.AddressRequest? request) =>
+  _i9.Future<_i6.AddressResponse> createAddress(_i14.AddressRequest? request) =>
       (super.noSuchMethod(
             Invocation.method(#createAddress, [request]),
-            returnValue: _i8.Future<_i5.AddressResponse>.value(
-              _FakeAddressResponse_3(
+            returnValue: _i9.Future<_i6.AddressResponse>.value(
+              _FakeAddressResponse_4(
                 this,
                 Invocation.method(#createAddress, [request]),
               ),
             ),
-            returnValueForMissingStub: _i8.Future<_i5.AddressResponse>.value(
-              _FakeAddressResponse_3(
+            returnValueForMissingStub: _i9.Future<_i6.AddressResponse>.value(
+              _FakeAddressResponse_4(
                 this,
                 Invocation.method(#createAddress, [request]),
               ),
             ),
           )
-          as _i8.Future<_i5.AddressResponse>);
+          as _i9.Future<_i6.AddressResponse>);
 
   @override
-  _i8.Future<_i5.AddressResponse> updateAddress(
+  _i9.Future<_i6.AddressResponse> updateAddress(
     int? id,
-    _i13.AddressRequest? request,
+    _i14.AddressRequest? request,
   ) =>
       (super.noSuchMethod(
             Invocation.method(#updateAddress, [id, request]),
-            returnValue: _i8.Future<_i5.AddressResponse>.value(
-              _FakeAddressResponse_3(
+            returnValue: _i9.Future<_i6.AddressResponse>.value(
+              _FakeAddressResponse_4(
                 this,
                 Invocation.method(#updateAddress, [id, request]),
               ),
             ),
-            returnValueForMissingStub: _i8.Future<_i5.AddressResponse>.value(
-              _FakeAddressResponse_3(
+            returnValueForMissingStub: _i9.Future<_i6.AddressResponse>.value(
+              _FakeAddressResponse_4(
                 this,
                 Invocation.method(#updateAddress, [id, request]),
               ),
             ),
           )
-          as _i8.Future<_i5.AddressResponse>);
+          as _i9.Future<_i6.AddressResponse>);
 
   @override
-  _i8.Future<void> deleteAddress(int? id) =>
+  _i9.Future<void> deleteAddress(int? id) =>
       (super.noSuchMethod(
             Invocation.method(#deleteAddress, [id]),
-            returnValue: _i8.Future<void>.value(),
-            returnValueForMissingStub: _i8.Future<void>.value(),
+            returnValue: _i9.Future<void>.value(),
+            returnValueForMissingStub: _i9.Future<void>.value(),
           )
-          as _i8.Future<void>);
+          as _i9.Future<void>);
 }
 
 /// A class which mocks [CartRepository].
 ///
 /// See the documentation for Mockito's code generation for more information.
-class MockCartRepository extends _i1.Mock implements _i14.CartRepository {
+class MockCartRepository extends _i1.Mock implements _i15.CartRepository {
   @override
-  _i8.Future<_i6.CartResponse> getCart() =>
+  _i9.Future<_i7.CartResponse> getCart() =>
       (super.noSuchMethod(
             Invocation.method(#getCart, []),
-            returnValue: _i8.Future<_i6.CartResponse>.value(
-              _FakeCartResponse_4(this, Invocation.method(#getCart, [])),
+            returnValue: _i9.Future<_i7.CartResponse>.value(
+              _FakeCartResponse_5(this, Invocation.method(#getCart, [])),
             ),
-            returnValueForMissingStub: _i8.Future<_i6.CartResponse>.value(
-              _FakeCartResponse_4(this, Invocation.method(#getCart, [])),
+            returnValueForMissingStub: _i9.Future<_i7.CartResponse>.value(
+              _FakeCartResponse_5(this, Invocation.method(#getCart, [])),
             ),
           )
-          as _i8.Future<_i6.CartResponse>);
+          as _i9.Future<_i7.CartResponse>);
 
   @override
-  _i8.Future<_i6.CartResponse> addItem(_i15.AddCartItemRequest? request) =>
+  _i9.Future<_i7.CartResponse> addItem(_i16.AddCartItemRequest? request) =>
       (super.noSuchMethod(
             Invocation.method(#addItem, [request]),
-            returnValue: _i8.Future<_i6.CartResponse>.value(
-              _FakeCartResponse_4(this, Invocation.method(#addItem, [request])),
+            returnValue: _i9.Future<_i7.CartResponse>.value(
+              _FakeCartResponse_5(this, Invocation.method(#addItem, [request])),
             ),
-            returnValueForMissingStub: _i8.Future<_i6.CartResponse>.value(
-              _FakeCartResponse_4(this, Invocation.method(#addItem, [request])),
+            returnValueForMissingStub: _i9.Future<_i7.CartResponse>.value(
+              _FakeCartResponse_5(this, Invocation.method(#addItem, [request])),
             ),
           )
-          as _i8.Future<_i6.CartResponse>);
+          as _i9.Future<_i7.CartResponse>);
 
   @override
-  _i8.Future<_i6.CartResponse> updateItem(
+  _i9.Future<_i7.CartResponse> updateItem(
     int? cartItemId,
-    _i16.UpdateCartItemRequest? request,
+    _i17.UpdateCartItemRequest? request,
   ) =>
       (super.noSuchMethod(
             Invocation.method(#updateItem, [cartItemId, request]),
-            returnValue: _i8.Future<_i6.CartResponse>.value(
-              _FakeCartResponse_4(
+            returnValue: _i9.Future<_i7.CartResponse>.value(
+              _FakeCartResponse_5(
                 this,
                 Invocation.method(#updateItem, [cartItemId, request]),
               ),
             ),
-            returnValueForMissingStub: _i8.Future<_i6.CartResponse>.value(
-              _FakeCartResponse_4(
+            returnValueForMissingStub: _i9.Future<_i7.CartResponse>.value(
+              _FakeCartResponse_5(
                 this,
                 Invocation.method(#updateItem, [cartItemId, request]),
               ),
             ),
           )
-          as _i8.Future<_i6.CartResponse>);
+          as _i9.Future<_i7.CartResponse>);
 
   @override
-  _i8.Future<_i6.CartResponse> removeItem(int? cartItemId) =>
+  _i9.Future<_i7.CartResponse> removeItem(int? cartItemId) =>
       (super.noSuchMethod(
             Invocation.method(#removeItem, [cartItemId]),
-            returnValue: _i8.Future<_i6.CartResponse>.value(
-              _FakeCartResponse_4(
+            returnValue: _i9.Future<_i7.CartResponse>.value(
+              _FakeCartResponse_5(
                 this,
                 Invocation.method(#removeItem, [cartItemId]),
               ),
             ),
-            returnValueForMissingStub: _i8.Future<_i6.CartResponse>.value(
-              _FakeCartResponse_4(
+            returnValueForMissingStub: _i9.Future<_i7.CartResponse>.value(
+              _FakeCartResponse_5(
                 this,
                 Invocation.method(#removeItem, [cartItemId]),
               ),
             ),
           )
-          as _i8.Future<_i6.CartResponse>);
+          as _i9.Future<_i7.CartResponse>);
 }

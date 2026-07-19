@@ -17,6 +17,7 @@ class AuthValidators {
   static final RegExp _emailPattern = RegExp(r'^[^@\s]+@[^@\s]+$');
   static final RegExp _passwordPattern = RegExp(r'^(?=.*[A-Za-z])(?=.*\d).+$');
   static final RegExp _phonePattern = RegExp(r'^0\d{9}$');
+  static final RegExp _otpPattern = RegExp(r'^\d{6}$');
 
   static const int _passwordMinLength = 8;
 
@@ -29,6 +30,14 @@ class AuthValidators {
   static const String _phoneRequired = 'Phone number is required';
   static const String _phoneInvalid =
       'Phone must be 10 digits and start with 0';
+  static const String _otpRequired = 'Reset code is required';
+  static const String _otpInvalid = 'Enter the 6-digit reset code';
+
+  /// User-facing description of the [password] rule, for a screen to show
+  /// proactively (e.g. as field helper text) before submission — the exact
+  /// same wording [password] returns as its rejection message, so the rule is
+  /// described in one place only (Sprint 13 Task 07).
+  static const String passwordRuleHint = _passwordInvalid;
 
   /// `@NotBlank @Email` — required, valid email format.
   static String? email(String? value) {
@@ -79,6 +88,19 @@ class AuthValidators {
     }
     if (!_phonePattern.hasMatch(input)) {
       return _phoneInvalid;
+    }
+    return null;
+  }
+
+  /// `@NotBlank @Pattern("^\d{6}$")` — the emailed password-reset code
+  /// (Sprint 13 Task 06).
+  static String? validateOtp(String? value) {
+    final input = value?.trim() ?? '';
+    if (input.isEmpty) {
+      return _otpRequired;
+    }
+    if (!_otpPattern.hasMatch(input)) {
+      return _otpInvalid;
     }
     return null;
   }
