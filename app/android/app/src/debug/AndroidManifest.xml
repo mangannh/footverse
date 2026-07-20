@@ -9,5 +9,10 @@
          backend over http:// (e.g. the Android emulator host at
          http://10.0.2.2:8080). Release builds keep Android's default
          cleartext-blocked policy — this attribute is not merged into them. -->
-    <application android:usesCleartextTraffic="true" />
+    <!-- Debug-only: also trust user-installed CA certificates (see
+         res/xml/network_security_config.xml) — release builds are not
+         affected, since this manifest is never merged into them. -->
+    <application
+        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config" />
 </manifest>

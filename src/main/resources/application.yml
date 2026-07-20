@@ -92,3 +92,12 @@ footverse:
     locale: ${FOOTVERSE_VNPAY_LOCALE:vn}
     # Payment-URL validity window in minutes.
     expire-minutes: ${FOOTVERSE_VNPAY_EXPIRE_MINUTES:15}
+
+  # CORS allowed origin patterns for browser clients (Chrome/Flutter Web, the React
+  # admin panel). Native mobile clients (Android/iOS) never send a CORS preflight, so
+  # this setting has no effect on them either way. No wildcard default here -- every
+  # non-local environment must supply its own explicit origin list via the env var;
+  # application-local.yml supplies the permissive local-dev default (any localhost /
+  # 127.0.0.1 port, since Flutter Web's dev server picks a random port per run).
+  cors:
+    allowed-origin-patterns: ${FOOTVERSE_CORS_ALLOWED_ORIGIN_PATTERNS:}

@@ -190,7 +190,8 @@ GoRouter createAppRouter(
       GoRoute(
         path: _accountPath,
         name: AppRoute.account,
-        builder: (context, state) => const AccountScreen(),
+        builder: (context, state) =>
+            AccountScreen(profileRepository: profileRepository),
       ),
       GoRoute(
         path: _addressesPath,

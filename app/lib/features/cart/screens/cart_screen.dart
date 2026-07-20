@@ -4,6 +4,12 @@ import 'package:provider/provider.dart';
 
 import '../../../core/error/app_exception.dart';
 import '../../../core/router/app_routes.dart';
+import '../../../core/theme/app_elevation.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/widgets/app_empty_state.dart';
+import '../../../core/widgets/app_error_state.dart';
+import '../../../core/widgets/app_skeleton.dart';
+import '../../../core/widgets/price_text.dart';
 import '../models/cart_response.dart';
 import '../providers/cart_provider.dart';
 import '../widgets/cart_line_tile.dart';
@@ -84,23 +90,34 @@ class _CartScreenState extends State<CartScreen> {
     final provider = context.watch<CartProvider>();
     return Scaffold(
       appBar: AppBar(title: const Text('Cart')),
-      body: SafeArea(child: _buildBody(provider)),
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: provider.retry,
+          child: _buildBody(provider),
+        ),
+      ),
     );
   }
 
   Widget _buildBody(CartProvider provider) {
     switch (provider.status) {
       case CartStatus.loading:
-        return const Center(child: CircularProgressIndicator());
+        return const _CartSkeleton();
       case CartStatus.error:
-        return _ErrorView(
+        return AppErrorState(
           message: provider.error?.message ?? 'Something went wrong',
           onRetry: provider.retry,
         );
       case CartStatus.ready:
         final cart = provider.cart;
         if (cart == null || cart.items.isEmpty) {
-          return const _EmptyView();
+          return AppEmptyState(
+            icon: Icons.shopping_cart_outlined,
+            title: 'Your cart is empty',
+            message: 'Add products you love and they will show up here.',
+            actionLabel: 'Browse products',
+            onAction: () => context.goNamed(AppRoute.catalog),
+          );
         }
         return _buildCart(provider, cart);
     }
@@ -113,7 +130,7 @@ class _CartScreenState extends State<CartScreen> {
       children: <Widget>[
         Expanded(
           child: ListView.builder(
-            padding: const EdgeInsets.symmetric(vertical: 8),
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
             itemCount: items.length,
             itemBuilder: (context, index) {
               final item = items[index];
@@ -152,12 +169,37 @@ class _CartScreenState extends State<CartScreen> {
   }
 }
 
+/// The loading state: a plausible number of [ListTileSkeleton] rows in place of
+/// the eventual cart lines (design/03 §25, design/04 §1.2) — never a centred
+/// spinner.
+class _CartSkeleton extends StatelessWidget {
+  const _CartSkeleton();
+
+  static const int _rowCount = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.xs,
+      ),
+      itemCount: _rowCount,
+      itemBuilder: (context, index) => const ListTileSkeleton(),
+    );
+  }
+}
+
 /// The cart totals bar: the server's whole-cart `subtotal` and `itemCount`,
 /// rendered exactly as delivered (dto-spec §12 — the client never recomputes
 /// them), the count of selected lines, and the checkout entry
 /// (sprint-8-plan item 04). The selected subset's subtotal is **not** computed
 /// here — it comes from the checkout preview (sprint-8-plan item 05). [onCheckout]
 /// is null when no line is selected, which disables the button.
+///
+/// This is already the reference sticky-bottom-summary pattern
+/// (design/03 §1, design/04 §4.6) — Sprint 14 restyles it with tokens and
+/// [PriceText] only; the structure is unchanged.
 class _CartSummary extends StatelessWidget {
   const _CartSummary({
     required this.subtotal,
@@ -173,11 +215,15 @@ class _CartSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
+    final theme = Theme.of(context);
     return Material(
-      elevation: 3,
+      elevation: AppElevation.sticky,
+      color: theme.colorScheme.surface,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
         child: SafeArea(
           top: false,
           child: Column(
@@ -187,13 +233,16 @@ class _CartSummary extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: <Widget>[
-                  Text('Subtotal ($itemCount)', style: textTheme.titleMedium),
-                  Text('$subtotal', style: textTheme.titleLarge),
+                  Text(
+                    'Subtotal ($itemCount)',
+                    style: theme.textTheme.titleMedium,
+                  ),
+                  PriceText(amount: subtotal, variant: PriceVariant.emphasis),
                 ],
               ),
-              const SizedBox(height: 4),
-              Text('$selectedCount selected', style: textTheme.bodySmall),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.xxs),
+              Text('$selectedCount selected', style: theme.textTheme.bodySmall),
+              const SizedBox(height: AppSpacing.sm),
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
@@ -204,47 +253,6 @@ class _CartSummary extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// The full-screen error state with a retry affordance
-/// (flutter-guidelines §Error Handling).
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message, required this.onRetry});
-
-  final String message;
-  final Future<void> Function() onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The empty state shown when the caller's cart has no lines.
-class _EmptyView extends StatelessWidget {
-  const _EmptyView();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Padding(
-        padding: EdgeInsets.all(24),
-        child: Text('Your cart is empty.'),
       ),
     );
   }

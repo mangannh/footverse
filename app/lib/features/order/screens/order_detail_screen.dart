@@ -3,7 +3,13 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/error/app_exception.dart';
+import '../../../core/format/app_date_format.dart';
 import '../../../core/router/app_routes.dart';
+import '../../../core/theme/app_elevation.dart';
+import '../../../core/theme/app_radius.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/widgets/app_error_state.dart';
+import '../../../core/widgets/app_skeleton.dart';
 import '../models/order_detail_response.dart';
 import '../models/order_item_response.dart';
 import '../models/order_status.dart';
@@ -11,7 +17,9 @@ import '../models/payment_method.dart';
 import '../models/payment_status.dart';
 import '../providers/order_detail_provider.dart';
 import '../repositories/order_repository.dart';
+import '../widgets/order_card.dart';
 import '../widgets/order_item_tile.dart';
+import '../widgets/order_summary_tile.dart';
 import 'payment_webview_screen.dart';
 
 /// The caller's full order with its checkout snapshots and the `PENDING`
@@ -121,9 +129,9 @@ class _OrderDetailView extends StatelessWidget {
   Widget _buildBody(BuildContext context, OrderDetailProvider provider) {
     switch (provider.status) {
       case OrderDetailStatus.loading:
-        return const Center(child: CircularProgressIndicator());
+        return const _OrderDetailSkeleton();
       case OrderDetailStatus.error:
-        return _ErrorView(
+        return AppErrorState(
           message: provider.error?.message ?? 'Something went wrong',
           onRetry: provider.retry,
         );
@@ -142,20 +150,24 @@ class _OrderDetailView extends StatelessWidget {
       children: <Widget>[
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppSpacing.md),
             children: <Widget>[
-              _OrderHeader(order: order),
-              const SizedBox(height: 16),
+              // Status is the first thing read — it is why the customer
+              // opened the screen (design/04 §4.10).
+              _StatusBanner(status: order.status),
+              const SizedBox(height: AppSpacing.lg),
+              _OrderInfoCard(order: order),
+              const SizedBox(height: AppSpacing.lg),
               _ShippingSection(order: order),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
               _ItemsSection(
                 items: order.items,
                 delivered: order.status == OrderStatus.delivered,
               ),
-              const SizedBox(height: 16),
-              _MoneySummary(order: order),
+              const SizedBox(height: AppSpacing.lg),
+              _SummaryCard(order: order),
               if (order.note != null && order.note!.isNotEmpty) ...<Widget>[
-                const SizedBox(height: 16),
+                const SizedBox(height: AppSpacing.lg),
                 _NoteSection(note: order.note!),
               ],
             ],
@@ -163,6 +175,9 @@ class _OrderDetailView extends StatelessWidget {
         ),
         if (canRetryPayment)
           _PayNowBar(onPay: () => _retryPayment(context, order.id)),
+        // Cancel appears only when the server's own status says the order is
+        // still PENDING — never shown disabled on a delivered/cancelled
+        // order; absence is clearer than a dead control (design/04 §4.10).
         if (order.status == OrderStatus.pending)
           _CancelBar(
             cancelling: provider.isCancelling,
@@ -173,27 +188,79 @@ class _OrderDetailView extends StatelessWidget {
   }
 }
 
-/// The order header: code, status, payment, method, and the relevant timestamps
-/// (`cancelledAt` / `deliveredAt` only when the server provides them).
-class _OrderHeader extends StatelessWidget {
-  const _OrderHeader({required this.order});
+/// The status banner: the current status, prominent, as the very first
+/// element on the screen — word and icon, using the same colour mapping as
+/// [OrderCard]'s tag (design/04 §4.10).
+class _StatusBanner extends StatelessWidget {
+  const _StatusBanner({required this.status});
+
+  final OrderStatus status;
+
+  static const double _iconSize = 24;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style = orderStatusTagStyle(status, theme.colorScheme);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: style.background,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Row(
+          children: <Widget>[
+            Icon(style.icon, size: _iconSize, color: style.foreground),
+            const SizedBox(width: AppSpacing.sm),
+            Text(
+              style.label,
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: style.foreground,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The loading state: an approximation of the banner, info card, item rows,
+/// and summary rows (design/03 §25, design/04 §1.2) — never a centred spinner.
+class _OrderDetailSkeleton extends StatelessWidget {
+  const _OrderDetailSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      children: const <Widget>[
+        TextLineSkeleton(widthFactor: 1),
+        SizedBox(height: AppSpacing.lg),
+        ListTileSkeleton(),
+        ListTileSkeleton(),
+        SizedBox(height: AppSpacing.lg),
+        ListTileSkeleton(),
+        SizedBox(height: AppSpacing.lg),
+        TextLineSkeleton(widthFactor: 0.6),
+        SizedBox(height: AppSpacing.xs),
+        TextLineSkeleton(widthFactor: 0.6),
+        SizedBox(height: AppSpacing.xs),
+        TextLineSkeleton(widthFactor: 0.6),
+      ],
+    );
+  }
+}
+
+/// The order's identifying and status-adjacent info: its code, payment status
+/// and method, and the relevant timestamps (`cancelledAt` / `deliveredAt`
+/// only when the server provides them). The `status` field itself moved to
+/// [_StatusBanner]; this card is not repeated here.
+class _OrderInfoCard extends StatelessWidget {
+  const _OrderInfoCard({required this.order});
 
   final OrderDetailResponse order;
-
-  static String _statusLabel(OrderStatus status) {
-    switch (status) {
-      case OrderStatus.pending:
-        return 'Pending';
-      case OrderStatus.confirmed:
-        return 'Confirmed';
-      case OrderStatus.shipping:
-        return 'Shipping';
-      case OrderStatus.delivered:
-        return 'Delivered';
-      case OrderStatus.cancelled:
-        return 'Cancelled';
-    }
-  }
 
   static String _paymentStatusLabel(PaymentStatus status) {
     switch (status) {
@@ -213,24 +280,23 @@ class _OrderHeader extends StatelessWidget {
     }
   }
 
-  static String _formatDate(DateTime date) {
-    String two(int value) => value.toString().padLeft(2, '0');
-    return '${date.year}-${two(date.month)}-${two(date.day)} '
-        '${two(date.hour)}:${two(date.minute)}';
-  }
-
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     return Card(
+      elevation: AppElevation.none,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(order.orderCode, style: textTheme.titleLarge),
-            const SizedBox(height: 8),
-            _InfoRow(label: 'Status', value: _statusLabel(order.status)),
+            Text(
+              order.orderCode,
+              style: textTheme.titleLarge,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: AppSpacing.xs),
             _InfoRow(
               label: 'Payment',
               value: _paymentStatusLabel(order.paymentStatus),
@@ -239,16 +305,19 @@ class _OrderHeader extends StatelessWidget {
               label: 'Method',
               value: _paymentMethodLabel(order.paymentMethod),
             ),
-            _InfoRow(label: 'Placed', value: _formatDate(order.createdAt)),
+            _InfoRow(
+              label: 'Placed',
+              value: AppDateFormat.format(order.createdAt),
+            ),
             if (order.cancelledAt != null)
               _InfoRow(
                 label: 'Cancelled',
-                value: _formatDate(order.cancelledAt!),
+                value: AppDateFormat.format(order.cancelledAt!),
               ),
             if (order.deliveredAt != null)
               _InfoRow(
                 label: 'Delivered',
-                value: _formatDate(order.deliveredAt!),
+                value: AppDateFormat.format(order.deliveredAt!),
               ),
           ],
         ),
@@ -257,23 +326,35 @@ class _OrderHeader extends StatelessWidget {
   }
 }
 
-/// One label / value line in the header.
+/// One label / value line in the info card.
 class _InfoRow extends StatelessWidget {
   const _InfoRow({required this.label, required this.value});
 
   final String label;
   final String value;
 
+  static const double _labelWidth = 96;
+
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxs),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          SizedBox(width: 96, child: Text(label, style: textTheme.bodyMedium)),
-          Expanded(child: Text(value, style: textTheme.bodyMedium)),
+          SizedBox(
+            width: _labelWidth,
+            child: Text(label, style: textTheme.bodyMedium),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: textTheme.bodyMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
     );
@@ -291,20 +372,33 @@ class _ShippingSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     return Card(
+      elevation: AppElevation.none,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text('Shipping', style: textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Text(order.shippingRecipientName, style: textTheme.bodyLarge),
-            Text(order.shippingRecipientPhone, style: textTheme.bodyMedium),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              order.shippingRecipientName,
+              style: textTheme.bodyLarge,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            Text(
+              order.shippingRecipientPhone,
+              style: textTheme.bodyMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: AppSpacing.xxs),
             Text(
               '${order.shippingStreetAddress}, ${order.shippingWard}, '
               '${order.shippingDistrict}, ${order.shippingProvince}',
               style: textTheme.bodyMedium,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
@@ -330,7 +424,7 @@ class _ItemsSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Text('Items (${items.length})', style: textTheme.titleMedium),
-        const SizedBox(height: 4),
+        const SizedBox(height: AppSpacing.xxs),
         for (final item in items)
           OrderItemTile(
             item: item,
@@ -346,73 +440,35 @@ class _ItemsSection extends StatelessWidget {
   }
 }
 
-/// The server-computed money summary (dto-spec §1) — `subtotal`,
-/// `discountAmount`, `shippingFee`, `total`, and `couponCode` when present, each
-/// rendered exactly as delivered (the client computes none of them).
-class _MoneySummary extends StatelessWidget {
-  const _MoneySummary({required this.order});
+/// The server-computed money summary card, delegating the row rendering to
+/// the shared [OrderSummaryTile] (dto-spec §1 — the client computes none of
+/// these amounts).
+class _SummaryCard extends StatelessWidget {
+  const _SummaryCard({required this.order});
 
   final OrderDetailResponse order;
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    final couponCode = order.couponCode;
     return Card(
+      elevation: AppElevation.none,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text('Summary', style: textTheme.titleMedium),
-            const SizedBox(height: 8),
-            _MoneyRow(label: 'Subtotal', amount: order.subtotal),
-            _MoneyRow(label: 'Discount', amount: order.discountAmount),
-            _MoneyRow(label: 'Shipping', amount: order.shippingFee),
-            if (couponCode != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: <Widget>[
-                    Text('Coupon', style: textTheme.bodyMedium),
-                    Text(couponCode, style: textTheme.bodyMedium),
-                  ],
-                ),
-              ),
-            const Divider(),
-            _MoneyRow(label: 'Total', amount: order.total, emphasize: true),
+            const SizedBox(height: AppSpacing.xs),
+            OrderSummaryTile(
+              subtotal: order.subtotal,
+              discountAmount: order.discountAmount,
+              shippingFee: order.shippingFee,
+              total: order.total,
+              couponCode: order.couponCode,
+            ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// One labelled amount row. [amount] is a server value shown verbatim.
-class _MoneyRow extends StatelessWidget {
-  const _MoneyRow({
-    required this.label,
-    required this.amount,
-    this.emphasize = false,
-  });
-
-  final String label;
-  final double amount;
-  final bool emphasize;
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final style = emphasize ? textTheme.titleMedium : textTheme.bodyMedium;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: <Widget>[
-          Text(label, style: style),
-          Text('$amount', style: style),
-        ],
       ),
     );
   }
@@ -428,14 +484,20 @@ class _NoteSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     return Card(
+      elevation: AppElevation.none,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text('Note', style: textTheme.titleMedium),
-            const SizedBox(height: 4),
-            Text(note, style: textTheme.bodyMedium),
+            const SizedBox(height: AppSpacing.xxs),
+            Text(
+              note,
+              style: textTheme.bodyMedium,
+              maxLines: 5,
+              overflow: TextOverflow.ellipsis,
+            ),
           ],
         ),
       ),
@@ -455,9 +517,14 @@ class _PayNowBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      elevation: 3,
+      elevation: AppElevation.sticky,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          AppSpacing.sm,
+          AppSpacing.md,
+          0,
+        ),
         child: SizedBox(
           width: double.infinity,
           child: FilledButton(onPressed: onPay, child: const Text('Pay now')),
@@ -475,12 +542,17 @@ class _CancelBar extends StatelessWidget {
   final bool cancelling;
   final VoidCallback onCancel;
 
+  static const double _spinnerSize = 20;
+
   @override
   Widget build(BuildContext context) {
     return Material(
-      elevation: 3,
+      elevation: AppElevation.sticky,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
         child: SafeArea(
           top: false,
           child: SizedBox(
@@ -489,40 +561,13 @@ class _CancelBar extends StatelessWidget {
               onPressed: cancelling ? null : onCancel,
               child: cancelling
                   ? const SizedBox(
-                      height: 20,
-                      width: 20,
+                      height: _spinnerSize,
+                      width: _spinnerSize,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Text('Cancel Order'),
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The full-screen error state with a retry affordance
-/// (flutter-guidelines §Error Handling). It renders the enveloped `ORDER_*`
-/// message (e.g. `ORDER_FORBIDDEN` / `ORDER_NOT_FOUND`) exactly as delivered.
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message, required this.onRetry});
-
-  final String message;
-  final Future<void> Function() onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
         ),
       ),
     );

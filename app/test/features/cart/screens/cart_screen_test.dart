@@ -1,6 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:footverse/core/error/app_exception.dart';
 import 'package:footverse/core/router/app_routes.dart';
+import 'package:footverse/core/theme/app_motion.dart';
+import 'package:footverse/core/theme/app_theme.dart';
+import 'package:footverse/core/widgets/app_empty_state.dart';
+import 'package:footverse/core/widgets/app_error_state.dart';
+import 'package:footverse/core/widgets/app_skeleton.dart';
+import 'package:footverse/core/widgets/price_text.dart';
+import 'package:footverse/core/widgets/quantity_selector.dart';
 import 'package:footverse/features/cart/models/cart_item_response.dart';
 import 'package:footverse/features/cart/models/cart_response.dart';
 import 'package:footverse/features/cart/providers/cart_provider.dart';
@@ -51,6 +61,16 @@ class _CheckoutProbe extends StatelessWidget {
       Scaffold(body: Center(child: Text('ids:${ids.join(',')}')));
 }
 
+/// A stand-in for the catalog route, so a test can assert the empty state's
+/// "Browse products" action actually navigates there.
+class _CatalogProbe extends StatelessWidget {
+  const _CatalogProbe();
+
+  @override
+  Widget build(BuildContext context) =>
+      const Scaffold(body: Center(child: Text('catalog')));
+}
+
 GoRouter _router() => GoRouter(
   routes: <RouteBase>[
     GoRoute(path: '/', builder: (context, state) => const CartScreen()),
@@ -59,6 +79,11 @@ GoRouter _router() => GoRouter(
       name: AppRoute.checkout,
       builder: (context, state) =>
           _CheckoutProbe(ids: (state.extra as List<int>?) ?? const <int>[]),
+    ),
+    GoRoute(
+      path: '/catalog',
+      name: AppRoute.catalog,
+      builder: (context, state) => const _CatalogProbe(),
     ),
   ],
 );
@@ -79,7 +104,10 @@ Future<void> _pumpCart(
   await tester.pumpWidget(
     ChangeNotifierProvider<CartProvider>.value(
       value: CartProvider(repository),
-      child: MaterialApp.router(routerConfig: _router()),
+      child: MaterialApp.router(
+        theme: AppTheme.light(),
+        routerConfig: _router(),
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -166,5 +194,110 @@ void main() {
     await tester.tap(find.widgetWithText(TextButton, 'Remove').first);
     await tester.pumpAndSettle();
     verify(repository.removeItem(1)).called(1);
+  });
+
+  testWidgets('uses the shared QuantitySelector, not a private stepper', (
+    tester,
+  ) async {
+    await _pumpCart(tester, repository);
+
+    expect(find.byType(QuantitySelector), findsNWidgets(3));
+  });
+
+  testWidgets(
+    'renders every amount through PriceText — no raw money on screen',
+    (tester) async {
+      await _pumpCart(tester, repository);
+
+      // unitPrice + lineTotal per of the 3 lines, plus the subtotal.
+      expect(find.byType(PriceText), findsNWidgets(7));
+      expect(find.text('300.0'), findsNothing);
+      expect(find.text('100.0'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'shows a skeleton while the cart loads — never a centred spinner',
+    (tester) async {
+      final completer = Completer<CartResponse>();
+      when(repository.getCart()).thenAnswer((_) => completer.future);
+
+      await tester.binding.setSurfaceSize(const Size(600, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        ChangeNotifierProvider<CartProvider>.value(
+          value: CartProvider(repository),
+          child: MaterialApp.router(
+            theme: AppTheme.light(),
+            routerConfig: _router(),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(AppMotion.short);
+      await tester.pump();
+
+      expect(find.byType(ListTileSkeleton), findsWidgets);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+
+      completer.complete(_cart());
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets(
+    'shows AppEmptyState with a "Browse products" action for an empty cart',
+    (tester) async {
+      when(repository.getCart()).thenAnswer(
+        (_) async => const CartResponse(items: [], subtotal: 0, itemCount: 0),
+      );
+
+      await _pumpCart(tester, repository);
+
+      expect(find.byType(AppEmptyState), findsOneWidget);
+      expect(find.text('Your cart is empty'), findsOneWidget);
+      expect(find.text('Browse products'), findsOneWidget);
+
+      await tester.tap(find.text('Browse products'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('catalog'), findsOneWidget);
+    },
+  );
+
+  testWidgets('shows AppErrorState on a failed load, with a working retry', (
+    tester,
+  ) async {
+    var callCount = 0;
+    when(repository.getCart()).thenAnswer((_) async {
+      callCount++;
+      if (callCount == 1) {
+        throw const AppException(message: 'Something broke');
+      }
+      return _cart();
+    });
+
+    await _pumpCart(tester, repository);
+
+    expect(find.byType(AppErrorState), findsOneWidget);
+    expect(find.text('Something broke'), findsOneWidget);
+
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AppErrorState), findsNothing);
+    expect(find.text('Product 1'), findsOneWidget);
+  });
+
+  testWidgets('has a RefreshIndicator that reloads the cart', (tester) async {
+    await _pumpCart(tester, repository);
+
+    expect(find.byType(RefreshIndicator), findsOneWidget);
+
+    await tester.fling(find.byType(ListView), const Offset(0, 300), 1000);
+    await tester.pumpAndSettle();
+
+    verify(repository.getCart()).called(greaterThanOrEqualTo(2));
   });
 }

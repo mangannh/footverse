@@ -4,6 +4,11 @@ import 'package:provider/provider.dart';
 
 import '../../../core/error/app_exception.dart';
 import '../../../core/router/app_routes.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/widgets/app_error_state.dart';
+import '../../../core/widgets/app_network_image.dart';
+import '../../../core/widgets/app_skeleton.dart';
+import '../../../core/widgets/section_header.dart';
 import '../../auth/models/role.dart';
 import '../../auth/models/user_response.dart';
 import '../../auth/validators/auth_validators.dart';
@@ -38,6 +43,11 @@ class ProfileScreen extends StatelessWidget {
 
 /// Renders the profile load states and, when ready, the read-only identity, the
 /// editable form, and the credential-screen entries.
+///
+/// The `AppBar`'s back arrow is Flutter's own automatic one — this screen is
+/// reachable only by push (from the account screen), so it already appears
+/// with no code here, matching design/03 §17 ("automatic back; never a
+/// custom back button").
 class _ProfileView extends StatelessWidget {
   const _ProfileView();
 
@@ -53,34 +63,30 @@ class _ProfileView extends StatelessWidget {
   Widget _buildBody(BuildContext context, ProfileProvider provider) {
     switch (provider.status) {
       case ProfileStatus.loading:
-        return const Center(child: CircularProgressIndicator());
+        return const _ProfileSkeleton();
       case ProfileStatus.error:
-        return _ErrorView(
+        return AppErrorState(
           message: provider.error?.message ?? 'Something went wrong',
           onRetry: provider.retry,
         );
       case ProfileStatus.ready:
         final user = provider.user!;
         return ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.md),
           children: <Widget>[
-            _IdentityCard(user: user),
-            const SizedBox(height: 16),
+            _ProfileHeader(user: user),
+            const SectionHeader(title: 'Account'),
+            _InfoRow(label: 'Email', value: user.email),
+            _InfoRow(label: 'Role', value: _roleLabel(user.role)),
+            _InfoRow(label: 'Member since', value: _formatDate(user.createdAt)),
+            const SectionHeader(title: 'Edit profile'),
             _ProfileForm(user: user, isUpdating: provider.isUpdating),
-            const SizedBox(height: 8),
+            const SectionHeader(title: 'Security'),
             const _CredentialEntries(),
           ],
         );
     }
   }
-}
-
-/// The read-only identity: email, role, and member-since (from `createdAt`).
-/// None of these is editable through this screen.
-class _IdentityCard extends StatelessWidget {
-  const _IdentityCard({required this.user});
-
-  final UserResponse user;
 
   static String _roleLabel(Role role) {
     switch (role) {
@@ -95,45 +101,97 @@ class _IdentityCard extends StatelessWidget {
     String two(int value) => value.toString().padLeft(2, '0');
     return '${date.year}-${two(date.month)}-${two(date.day)}';
   }
+}
+
+/// The loading state: an approximation of the header, identity rows, and
+/// form fields (design/03 §25, design/04 §1.2) — never a centred spinner.
+class _ProfileSkeleton extends StatelessWidget {
+  const _ProfileSkeleton();
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text('Account', style: textTheme.titleMedium),
-            const SizedBox(height: 8),
-            _InfoRow(label: 'Email', value: user.email),
-            _InfoRow(label: 'Role', value: _roleLabel(user.role)),
-            _InfoRow(label: 'Member since', value: _formatDate(user.createdAt)),
-          ],
-        ),
+    return ListView(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      children: const <Widget>[
+        ListTileSkeleton(),
+        SizedBox(height: AppSpacing.lg),
+        TextLineSkeleton(widthFactor: 0.5),
+        SizedBox(height: AppSpacing.xs),
+        TextLineSkeleton(widthFactor: 0.4),
+        SizedBox(height: AppSpacing.xs),
+        TextLineSkeleton(widthFactor: 0.6),
+        SizedBox(height: AppSpacing.lg),
+        ListTileSkeleton(),
+        ListTileSkeleton(),
+        ListTileSkeleton(),
+      ],
+    );
+  }
+}
+
+/// The avatar + name header, the first thing this screen shows
+/// (design/04 §4.11).
+class _ProfileHeader extends StatelessWidget {
+  const _ProfileHeader({required this.user});
+
+  final UserResponse user;
+
+  static const double _avatarSize = 64;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+      child: Row(
+        children: <Widget>[
+          ClipOval(
+            child: AppNetworkImage(url: user.avatarUrl, width: _avatarSize),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(
+            child: Text(
+              user.fullName,
+              style: theme.textTheme.titleLarge,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-/// One label / value line in the identity card.
+/// One label / value line in the identity section.
 class _InfoRow extends StatelessWidget {
   const _InfoRow({required this.label, required this.value});
 
   final String label;
   final String value;
 
+  static const double _labelWidth = 112;
+
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxs),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          SizedBox(width: 112, child: Text(label, style: textTheme.bodyMedium)),
-          Expanded(child: Text(value, style: textTheme.bodyMedium)),
+          SizedBox(
+            width: _labelWidth,
+            child: Text(label, style: textTheme.bodyMedium),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: textTheme.bodyMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
     );
@@ -145,7 +203,8 @@ class _InfoRow extends StatelessWidget {
 /// the auth `fullName` / `phone` validators and the profile `avatarUrl` validator
 /// (assumption 5) — then drives [ProfileProvider.updateProfile]; the enveloped
 /// success or `409 USER_PHONE_DUPLICATED` is rendered as a `SnackBar`. The Save
-/// button disables while an update is in flight (single-flight).
+/// button disables while an update is in flight (single-flight) — already
+/// correct, preserved unchanged (design/04 §4.11).
 class _ProfileForm extends StatefulWidget {
   const _ProfileForm({required this.user, required this.isUpdating});
 
@@ -212,7 +271,7 @@ class _ProfileFormState extends State<_ProfileForm> {
             autofillHints: const <String>[AutofillHints.name],
             validator: AuthValidators.fullName,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.md),
           TextFormField(
             controller: _phoneController,
             decoration: const InputDecoration(labelText: 'Phone'),
@@ -221,7 +280,7 @@ class _ProfileFormState extends State<_ProfileForm> {
             autofillHints: const <String>[AutofillHints.telephoneNumber],
             validator: AuthValidators.phone,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.md),
           TextFormField(
             controller: _avatarUrlController,
             decoration: const InputDecoration(
@@ -231,7 +290,7 @@ class _ProfileFormState extends State<_ProfileForm> {
             textInputAction: TextInputAction.done,
             validator: ProfileValidators.avatarUrl,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.md),
           FilledButton(
             onPressed: widget.isUpdating ? null : _save,
             child: widget.isUpdating
@@ -256,9 +315,9 @@ class _ProfileFormState extends State<_ProfileForm> {
 /// itself, because its `ScaffoldMessenger` is torn down with the popped route.
 /// This screen (the stable destination) owns the confirmation instead: a
 /// password change confirms directly; an email change first re-fetches
-/// `GET /users/me` so the identity card reflects the new email, then confirms —
-/// the same pop-a-result-then-refresh flow the address form / list use after a
-/// mutation.
+/// `GET /users/me` so the identity section reflects the new email, then
+/// confirms — the same pop-a-result-then-refresh flow the address form / list
+/// use after a mutation.
 class _CredentialEntries extends StatelessWidget {
   const _CredentialEntries();
 
@@ -301,32 +360,6 @@ class _CredentialEntries extends StatelessWidget {
           onTap: () => _openChangeEmail(context),
         ),
       ],
-    );
-  }
-}
-
-/// The full-screen load-error state with a retry affordance
-/// (flutter-guidelines §Error Handling).
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message, required this.onRetry});
-
-  final String message;
-  final Future<void> Function() onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
-        ),
-      ),
     );
   }
 }

@@ -1,8 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../../core/error/app_exception.dart';
+import '../../../core/router/app_routes.dart';
+import '../../../core/theme/app_elevation.dart';
+import '../../../core/theme/app_motion.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/widgets/app_empty_state.dart';
+import '../../../core/widgets/app_error_state.dart';
+import '../../../core/widgets/app_skeleton.dart';
+import '../../../core/widgets/app_tag.dart';
+import '../../../core/widgets/price_text.dart';
+import '../../../core/widgets/rating_display.dart';
+import '../../../core/widgets/section_header.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../cart/widgets/add_to_cart_button.dart';
+import '../../cart/widgets/cart_badge.dart';
 import '../../profile/repositories/profile_repository.dart';
 import '../../review/providers/review_provider.dart';
 import '../../review/repositories/review_repository.dart';
@@ -10,14 +24,16 @@ import '../../review/widgets/review_write_section.dart';
 import '../../wishlist/widgets/wishlist_toggle.dart';
 import '../models/product_detail_response.dart';
 import '../models/product_image_response.dart';
+import '../models/product_summary_response.dart';
 import '../models/product_variant_response.dart';
 import '../models/product_variant_status.dart';
 import '../providers/product_detail_provider.dart';
 import '../repositories/product_repository.dart';
 import '../widgets/next_page_footer.dart';
+import '../widgets/product_card.dart';
 import '../widgets/product_image_gallery.dart';
-import '../widgets/product_variant_list.dart';
 import '../widgets/review_tile.dart';
+import '../widgets/size_selector.dart';
 
 /// The read-only product detail (sprint-6-plan item 11): images, the §9 detail
 /// fields, the read-only variants, the server's live rating / review count, and
@@ -65,7 +81,7 @@ class ProductDetailScreen extends StatelessWidget {
           },
         ),
       ],
-      child: const _ProductDetailView(),
+      child: _ProductDetailView(productRepository: productRepository),
     );
   }
 }
@@ -75,7 +91,9 @@ class ProductDetailScreen extends StatelessWidget {
 /// a short first page cannot scroll (the provider guards duplicate / surplus
 /// requests and stops at the last page).
 class _ProductDetailView extends StatefulWidget {
-  const _ProductDetailView();
+  const _ProductDetailView({required this.productRepository});
+
+  final ProductRepository productRepository;
 
   @override
   State<_ProductDetailView> createState() => _ProductDetailViewState();
@@ -123,6 +141,20 @@ class _ProductDetailViewState extends State<_ProductDetailView> {
     }
   }
 
+  /// The selected variant, or null when none is selected.
+  ProductVariantResponse? _selectedVariant(ProductDetailResponse detail) {
+    final id = _selectedVariantId;
+    if (id == null) {
+      return null;
+    }
+    for (final variant in detail.variants) {
+      if (variant.id == id) {
+        return variant;
+      }
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<ProductDetailProvider>();
@@ -137,25 +169,41 @@ class _ProductDetailViewState extends State<_ProductDetailView> {
     return Scaffold(
       appBar: AppBar(
         title: Text(detail?.name ?? 'Product'),
-        actions: detail == null
-            ? null
-            : <Widget>[WishlistToggle(productId: detail.id)],
+        actions: <Widget>[
+          const CartBadge(),
+          if (detail != null) WishlistToggle(productId: detail.id),
+        ],
       ),
       body: SafeArea(child: _buildBody(context, provider)),
+      bottomNavigationBar: detail == null || detail.variants.isEmpty
+          ? null
+          : _StickyAddToCartBar(
+              variant: _selectedVariant(detail),
+              selected: _selectedVariantId,
+            ),
     );
   }
 
   Widget _buildBody(BuildContext context, ProductDetailProvider provider) {
     switch (provider.status) {
       case ProductDetailStatus.loading:
-        return const Center(child: CircularProgressIndicator());
+        return const Padding(
+          padding: EdgeInsets.all(AppSpacing.md),
+          child: DetailSkeleton(),
+        );
       case ProductDetailStatus.error:
         if (provider.isNotFound) {
-          return _MessageView(
-            message: provider.error?.message ?? 'Product not found',
+          return AppEmptyState(
+            icon: Icons.search_off,
+            title: 'Product not found',
+            message:
+                provider.error?.message ??
+                'This product may have been removed.',
+            actionLabel: 'Browse products',
+            onAction: () => context.goNamed(AppRoute.catalog),
           );
         }
-        return _MessageView(
+        return AppErrorState(
           message: provider.error?.message ?? 'Something went wrong',
           onRetry: context.read<ProductDetailProvider>().retry,
         );
@@ -178,6 +226,16 @@ class _ProductDetailViewState extends State<_ProductDetailView> {
               child: ReviewWriteSection(reviews: provider.reviews),
             ),
             ..._reviewSlivers(context, provider),
+            // Related products (design/04 §4.4) come after the review list —
+            // the existing product-list endpoint filtered by category, no new
+            // endpoint.
+            SliverToBoxAdapter(
+              child: _RelatedProducts(
+                productRepository: widget.productRepository,
+                categoryId: provider.detail!.categoryId,
+                excludeProductId: provider.detail!.id,
+              ),
+            ),
           ],
         );
     }
@@ -192,8 +250,8 @@ class _ProductDetailViewState extends State<_ProductDetailView> {
         return const <Widget>[
           SliverToBoxAdapter(
             child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator()),
+              padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+              child: ListTileSkeleton(),
             ),
           ),
         ];
@@ -211,9 +269,10 @@ class _ProductDetailViewState extends State<_ProductDetailView> {
         if (provider.isReviewsEmpty) {
           return const <Widget>[
             SliverToBoxAdapter(
-              child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Text('No reviews yet.'),
+              child: AppEmptyState(
+                icon: Icons.rate_review_outlined,
+                title: 'No reviews yet',
+                message: 'Be the first to share what you think.',
               ),
             ),
           ];
@@ -241,9 +300,10 @@ class _ProductDetailViewState extends State<_ProductDetailView> {
   }
 }
 
-/// The product's own information plus its selectable variants, the composed
-/// add-to-cart affordance, and the reviews header — everything above the review
-/// list. Everything except the add-to-cart action stays read-only.
+/// The product's own information plus its selectable sizes and the reviews
+/// header — everything above the review list. Everything here stays
+/// read-only; add-to-cart lives in the sticky bottom bar instead
+/// (design/04 §4.4).
 class _DetailBody extends StatelessWidget {
   const _DetailBody({
     required this.detail,
@@ -257,122 +317,303 @@ class _DetailBody extends StatelessWidget {
   final int? selectedVariantId;
   final ValueChanged<int> onSelectVariant;
 
-  /// The selected variant, or null when none is selected.
-  ProductVariantResponse? get _selectedVariant {
-    final id = selectedVariantId;
-    if (id == null) {
-      return null;
-    }
-    for (final variant in detail.variants) {
-      if (variant.id == id) {
-        return variant;
-      }
-    }
-    return null;
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     final description = detail.description;
-    final variant = _selectedVariant;
-    // Client-side pre-check mirroring the frozen purchase rule for UX; the server
-    // stays authoritative (business-rules → Shopping Cart).
-    final purchasable =
-        variant != null &&
-        variant.status == ProductVariantStatus.active &&
-        variant.stockQuantity > 0;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        const SizedBox(height: 12),
         ProductImageGallery(images: images),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.md,
+            AppSpacing.md,
+            0,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text(detail.name, style: theme.textTheme.headlineSmall),
-              const SizedBox(height: 4),
               Text(
-                '${detail.brandName} · ${detail.categoryName}',
-                style: theme.textTheme.bodyMedium,
+                detail.brandName,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              const SizedBox(height: 8),
-              Text('${detail.basePrice}', style: theme.textTheme.titleLarge),
-              const SizedBox(height: 8),
-              Row(
+              const SizedBox(height: AppSpacing.xxs),
+              Text(
+                detail.name,
+                style: theme.textTheme.titleMedium,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              PriceText(
+                amount: detail.basePrice,
+                variant: PriceVariant.emphasis,
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Wrap(
+                spacing: AppSpacing.sm,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: <Widget>[
-                  Icon(Icons.star, size: 18, color: theme.colorScheme.primary),
-                  const SizedBox(width: 4),
-                  Text('${detail.averageRating}'),
-                  const SizedBox(width: 4),
-                  Text(
-                    '(${detail.reviewCount})',
-                    style: theme.textTheme.bodySmall,
+                  RatingDisplay(
+                    rating: detail.averageRating,
+                    reviewCount: detail.reviewCount,
                   ),
-                  const SizedBox(width: 16),
-                  Text(detail.available ? 'In stock' : 'Out of stock'),
+                  if (!detail.available)
+                    AppTag(
+                      label: 'Out of stock',
+                      icon: Icons.error_outline,
+                      backgroundColor: colorScheme.surfaceContainerHighest,
+                      foregroundColor: colorScheme.onSurfaceVariant,
+                    ),
                 ],
               ),
               if (description != null && description.isNotEmpty) ...<Widget>[
-                const SizedBox(height: 16),
-                Text(description, style: theme.textTheme.bodyMedium),
+                _ExpandableDescription(description: description),
               ],
-              const SizedBox(height: 16),
-              Text('Variants', style: theme.textTheme.titleMedium),
+              SectionHeader(
+                title: detail.variants.isEmpty ? 'Sizes' : 'Select size',
+              ),
             ],
           ),
         ),
-        const SizedBox(height: 8),
-        ProductVariantList(
-          variants: detail.variants,
-          selectedVariantId: selectedVariantId,
-          onSelect: onSelectVariant,
-        ),
-        if (detail.variants.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: AddToCartButton(
-              productVariantId: variant?.id,
-              purchasable: purchasable,
-            ),
-          ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Text('Reviews', style: theme.textTheme.titleMedium),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+          child: SizeSelector(
+            variants: detail.variants,
+            selectedVariantId: selectedVariantId,
+            onSelect: onSelectVariant,
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+          child: SectionHeader(title: 'Reviews'),
         ),
       ],
     );
   }
 }
 
-/// A centered message state, optionally with a retry affordance. Used for both
-/// the generic error (with retry) and the not-found state (no retry — retrying a
-/// missing product cannot help; the back button returns to the list).
-class _MessageView extends StatelessWidget {
-  const _MessageView({required this.message, this.onRetry});
+/// The description, collapsed beyond three lines with a "Show more" / "Show
+/// less" toggle (design/04 §4.4, design/05 §13 item 5 — `short`). Purely
+/// presentational screen-local state — nothing is fetched or mutated.
+class _ExpandableDescription extends StatefulWidget {
+  const _ExpandableDescription({required this.description});
 
-  final String message;
-  final VoidCallback? onRetry;
+  final String description;
+
+  @override
+  State<_ExpandableDescription> createState() => _ExpandableDescriptionState();
+}
+
+class _ExpandableDescriptionState extends State<_ExpandableDescription> {
+  bool _expanded = false;
+
+  static const int _collapsedMaxLines = 3;
 
   @override
   Widget build(BuildContext context) {
-    final onRetry = this.onRetry;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(message, textAlign: TextAlign.center),
-            if (onRetry != null) ...<Widget>[
-              const SizedBox(height: 16),
-              FilledButton(onPressed: onRetry, child: const Text('Retry')),
-            ],
-          ],
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        const SizedBox(height: AppSpacing.md),
+        AnimatedSize(
+          duration: AppMotion.short,
+          curve: AppMotion.standard,
+          alignment: Alignment.topLeft,
+          child: Text(
+            widget.description,
+            style: theme.textTheme.bodyMedium,
+            maxLines: _expanded ? null : _collapsedMaxLines,
+            overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+          ),
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: () => setState(() => _expanded = !_expanded),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(AppSpacing.xxl, AppSpacing.xxl),
+              padding: EdgeInsets.zero,
+            ),
+            child: Text(_expanded ? 'Show less' : 'Show more'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The sticky bottom add-to-cart bar (design/04 §4.4): moved out of the
+/// scroll so the screen's one decision is always reachable, even while the
+/// customer is reading reviews.
+class _StickyAddToCartBar extends StatelessWidget {
+  const _StickyAddToCartBar({required this.variant, required this.selected});
+
+  final ProductVariantResponse? variant;
+  final int? selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final variant = this.variant;
+    // Client-side pre-check mirroring the frozen purchase rule for UX; the
+    // server stays authoritative (business-rules → Shopping Cart).
+    final purchasable =
+        variant != null &&
+        variant.status == ProductVariantStatus.active &&
+        variant.stockQuantity > 0;
+    return Material(
+      elevation: AppElevation.sticky,
+      color: Theme.of(context).colorScheme.surface,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: AddToCartButton(
+            productVariantId: selected,
+            purchasable: purchasable,
+            onAdded: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text('Added to cart'),
+                  action: SnackBarAction(
+                    label: 'View cart',
+                    onPressed: () => context.pushNamed(AppRoute.cart),
+                  ),
+                ),
+              );
+            },
+          ),
         ),
       ),
+    );
+  }
+}
+
+/// The horizontal related-products row (design/04 §4.4): the existing
+/// product-list endpoint filtered by category — no new endpoint. This is a
+/// small, secondary, read-only data block with no shared state, so it owns
+/// its own screen-local async status rather than a new provider
+/// (sprint-14-plan: "no new provider" is a sprint-wide constraint, and
+/// `ProductDetailProvider` is frozen). A failed or empty fetch never blanks
+/// the rest of the page — it just omits the whole section, the same
+/// per-block-independent-failure pattern design/04 §4.1 specifies for Home.
+class _RelatedProducts extends StatefulWidget {
+  const _RelatedProducts({
+    required this.productRepository,
+    required this.categoryId,
+    required this.excludeProductId,
+  });
+
+  final ProductRepository productRepository;
+  final int categoryId;
+  final int excludeProductId;
+
+  @override
+  State<_RelatedProducts> createState() => _RelatedProductsState();
+}
+
+enum _RelatedStatus { loading, ready, error }
+
+class _RelatedProductsState extends State<_RelatedProducts> {
+  _RelatedStatus _status = _RelatedStatus.loading;
+  List<ProductSummaryResponse> _products = const <ProductSummaryResponse>[];
+
+  static const int _fetchSize = 10;
+  static const int _skeletonCount = 3;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final page = await widget.productRepository.searchProducts(
+        categoryId: widget.categoryId,
+        size: _fetchSize,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _products = page.content
+            .where((product) => product.id != widget.excludeProductId)
+            .toList();
+        _status = _RelatedStatus.ready;
+      });
+    } on AppException {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _status = _RelatedStatus.error);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_status == _RelatedStatus.error ||
+        (_status == _RelatedStatus.ready && _products.isEmpty)) {
+      return const SizedBox.shrink();
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+          child: SectionHeader(title: 'Related products'),
+        ),
+        SizedBox(
+          height: ProductCard.compactWidth + ProductCard.infoBlockHeight,
+          child: _status == _RelatedStatus.loading
+              ? _skeletonRow()
+              : _productRow(context),
+        ),
+      ],
+    );
+  }
+
+  Widget _skeletonRow() {
+    return ListView.separated(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      itemCount: _skeletonCount,
+      separatorBuilder: (context, index) =>
+          const SizedBox(width: AppSpacing.sm),
+      itemBuilder: (context, index) => const SizedBox(
+        width: ProductCard.compactWidth,
+        child: ProductCardSkeleton(),
+      ),
+    );
+  }
+
+  Widget _productRow(BuildContext context) {
+    return ListView.separated(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      itemCount: _products.length,
+      separatorBuilder: (context, index) =>
+          const SizedBox(width: AppSpacing.sm),
+      itemBuilder: (context, index) {
+        final product = _products[index];
+        return ProductCard(
+          product: product,
+          variant: ProductCardVariant.compact,
+          onTap: () => context.goNamed(
+            AppRoute.productDetail,
+            pathParameters: <String, String>{'id': '${product.id}'},
+          ),
+        );
+      },
     );
   }
 }

@@ -1,75 +1,100 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/widgets/app_network_image.dart';
 import '../models/product_image_response.dart';
 
-/// A horizontal gallery of the product's images. The caller passes them already
+/// The product's image gallery (design/03 §23, design/04 §4.4): full-bleed,
+/// 1:1, paged, with page indicator dots. The caller passes images already
 /// ordered by `displayOrder` (dto-spec §9); a product with no image shows a
-/// placeholder.
-class ProductImageGallery extends StatelessWidget {
+/// single placeholder frame at the same geometry.
+class ProductImageGallery extends StatefulWidget {
   const ProductImageGallery({super.key, required this.images});
 
   final List<ProductImageResponse> images;
 
-  static const double _height = 220;
+  @override
+  State<ProductImageGallery> createState() => _ProductImageGalleryState();
+}
+
+class _ProductImageGalleryState extends State<ProductImageGallery> {
+  final PageController _pageController = PageController();
+  int _page = 0;
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (images.isEmpty) {
-      return _GalleryImage.placeholder(context, width: double.infinity);
-    }
-    return SizedBox(
-      height: _height,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: images.length,
-        separatorBuilder: (context, index) => const SizedBox(width: 8),
-        itemBuilder: (context, index) =>
-            _GalleryImage(url: images[index].imageUrl),
-      ),
+    final images = widget.images;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = constraints.maxWidth;
+        if (images.isEmpty) {
+          return AppNetworkImage(url: null, width: size);
+        }
+        return Column(
+          children: <Widget>[
+            SizedBox(
+              width: size,
+              height: size,
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: images.length,
+                onPageChanged: (index) => setState(() => _page = index),
+                itemBuilder: (context, index) =>
+                    AppNetworkImage(url: images[index].imageUrl, width: size),
+              ),
+            ),
+            if (images.length > 1) ...<Widget>[
+              const SizedBox(height: AppSpacing.xs),
+              _PageDots(count: images.length, index: _page),
+            ],
+          ],
+        );
+      },
     );
   }
 }
 
-/// One gallery image with loading and error fallbacks.
-class _GalleryImage extends StatelessWidget {
-  const _GalleryImage({required this.url});
+/// The gallery's page indicator (design/05 §13 item 16 — the gallery-page
+/// transition; the dots themselves are a static readout of that state, not
+/// a separate animation).
+class _PageDots extends StatelessWidget {
+  const _PageDots({required this.count, required this.index});
 
-  final String url;
+  final int count;
+  final int index;
 
-  static const double _width = 300;
-
-  static Widget placeholder(BuildContext context, {double width = _width}) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      width: width,
-      height: ProductImageGallery._height,
-      color: colorScheme.surfaceContainerHighest,
-      child: Icon(
-        Icons.image_not_supported_outlined,
-        color: colorScheme.outline,
-      ),
-    );
-  }
+  static const double _dotSize = 6;
+  static const double _activeDotSize = 8;
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Image.network(
-        url,
-        width: _width,
-        height: ProductImageGallery._height,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) =>
-            placeholder(context, width: _width),
-        loadingBuilder: (context, child, progress) => progress == null
-            ? child
-            : const SizedBox(
-                width: _width,
-                height: ProductImageGallery._height,
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+    final colorScheme = Theme.of(context).colorScheme;
+    return Semantics(
+      label: 'Image ${index + 1} of $count',
+      excludeSemantics: true,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          for (var i = 0; i < count; i++) ...<Widget>[
+            if (i > 0) const SizedBox(width: AppSpacing.xxs),
+            Container(
+              width: i == index ? _activeDotSize : _dotSize,
+              height: i == index ? _activeDotSize : _dotSize,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: i == index
+                    ? colorScheme.primary
+                    : colorScheme.outlineVariant,
               ),
+            ),
+          ],
+        ],
       ),
     );
   }

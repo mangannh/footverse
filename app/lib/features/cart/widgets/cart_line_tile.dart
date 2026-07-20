@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/app_elevation.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/widgets/app_network_image.dart';
+import '../../../core/widgets/price_text.dart';
+import '../../../core/widgets/quantity_selector.dart';
 import '../models/cart_item_response.dart';
 
 /// One cart line (dto-spec §12): a selection control, image, name, colour / size,
-/// server-computed `unitPrice` and `lineTotal`, a quantity stepper, availability,
+/// server-computed `unitPrice` and `lineTotal`, a quantity selector, availability,
 /// and a separate remove action. It renders only — every money value is displayed
 /// exactly as the server delivered it and the client computes nothing
 /// (dto-spec §1).
@@ -17,8 +22,8 @@ import '../models/cart_item_response.dart';
 /// [onSelectionChanged] is null for a line that cannot be checked out (its variant
 /// is unavailable), which disables the selection checkbox — so the unavailable
 /// state is conveyed by the disabled control together with the icon-and-text
-/// [_UnavailableFlag], never by colour alone (flutter-guidelines §Accessibility).
-/// Selection is screen-local UI state owned by the parent (sprint-8-plan item 04).
+/// [_UnavailableFlag], never by colour alone (design/02 §2.4). Selection is
+/// screen-local UI state owned by the parent (sprint-8-plan item 04).
 class CartLineTile extends StatelessWidget {
   const CartLineTile({
     super.key,
@@ -39,14 +44,22 @@ class CartLineTile extends StatelessWidget {
   final VoidCallback? onDecrement;
   final VoidCallback onRemove;
 
+  static const double _thumbnailSize = 64;
+
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final onSelectionChanged = this.onSelectionChanged;
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      elevation: AppElevation.none,
+      margin: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.xs,
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(AppSpacing.sm),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
@@ -59,9 +72,12 @@ class CartLineTile extends StatelessWidget {
                       ? null
                       : (value) => onSelectionChanged(value ?? false),
                 ),
-                const SizedBox(width: 4),
-                _Thumbnail(imageUrl: item.productImageUrl),
-                const SizedBox(width: 12),
+                const SizedBox(width: AppSpacing.xxs),
+                AppNetworkImage(
+                  url: item.productImageUrl,
+                  width: _thumbnailSize,
+                ),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -72,15 +88,19 @@ class CartLineTile extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: AppSpacing.xxs),
                       Text(
                         '${item.color} · ${item.size}',
-                        style: textTheme.bodySmall,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 4),
-                      Text('${item.unitPrice}', style: textTheme.bodyMedium),
+                      const SizedBox(height: AppSpacing.xxs),
+                      PriceText(amount: item.unitPrice),
                       if (!item.available) ...<Widget>[
-                        const SizedBox(height: 6),
+                        const SizedBox(height: AppSpacing.xxs),
                         const _UnavailableFlag(),
                       ],
                     ],
@@ -88,22 +108,26 @@ class CartLineTile extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.xs),
             Row(
               children: <Widget>[
-                _QuantityStepper(
+                QuantitySelector(
                   quantity: item.quantity,
-                  onIncrement: enabled ? onIncrement : null,
-                  onDecrement: enabled ? onDecrement : null,
+                  onIncrement: onIncrement,
+                  onDecrement: onDecrement,
+                  enabled: enabled,
                 ),
                 const Spacer(),
-                Text('${item.lineTotal}', style: textTheme.titleMedium),
+                PriceText(amount: item.lineTotal),
               ],
             ),
             Align(
               alignment: Alignment.centerRight,
               child: TextButton.icon(
                 onPressed: enabled ? onRemove : null,
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(AppSpacing.xxl, AppSpacing.xxl),
+                ),
                 icon: const Icon(Icons.delete_outline),
                 label: const Text('Remove'),
               ),
@@ -115,46 +139,10 @@ class CartLineTile extends StatelessWidget {
   }
 }
 
-/// A +/- quantity control. The decrement is disabled when [onDecrement] is null
-/// (at quantity 1 or while a mutation is in flight), so it never drives quantity
-/// below 1 and never removes a line.
-class _QuantityStepper extends StatelessWidget {
-  const _QuantityStepper({
-    required this.quantity,
-    required this.onIncrement,
-    required this.onDecrement,
-  });
-
-  final int quantity;
-  final VoidCallback? onIncrement;
-  final VoidCallback? onDecrement;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        IconButton(
-          onPressed: onDecrement,
-          icon: const Icon(Icons.remove),
-          tooltip: 'Decrease quantity',
-          visualDensity: VisualDensity.compact,
-        ),
-        Text('$quantity', style: Theme.of(context).textTheme.titleMedium),
-        IconButton(
-          onPressed: onIncrement,
-          icon: const Icon(Icons.add),
-          tooltip: 'Increase quantity',
-          visualDensity: VisualDensity.compact,
-        ),
-      ],
-    );
-  }
-}
-
 /// The unavailable marker for a line whose variant is inactive or out of stock.
 /// It pairs an icon with text so state is not conveyed by colour alone
-/// (flutter-guidelines §Accessibility).
+/// (design/02 §2.4) — the reference implementation for this pattern
+/// (design/03 §13); kept unchanged by the Sprint 14 Cart task.
 class _UnavailableFlag extends StatelessWidget {
   const _UnavailableFlag();
 
@@ -173,52 +161,6 @@ class _UnavailableFlag extends StatelessWidget {
           ).textTheme.bodySmall?.copyWith(color: colorScheme.error),
         ),
       ],
-    );
-  }
-}
-
-/// The line thumbnail: the product image, or a placeholder when the line has no
-/// image or the image fails to load.
-class _Thumbnail extends StatelessWidget {
-  const _Thumbnail({required this.imageUrl});
-
-  final String? imageUrl;
-
-  static const double _size = 64;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final placeholder = Container(
-      width: _size,
-      height: _size,
-      color: colorScheme.surfaceContainerHighest,
-      child: Icon(
-        Icons.image_not_supported_outlined,
-        color: colorScheme.outline,
-      ),
-    );
-
-    final url = imageUrl;
-    if (url == null || url.isEmpty) {
-      return placeholder;
-    }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: Image.network(
-        url,
-        width: _size,
-        height: _size,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) => placeholder,
-        loadingBuilder: (context, child, progress) => progress == null
-            ? child
-            : const SizedBox(
-                width: _size,
-                height: _size,
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-              ),
-      ),
     );
   }
 }

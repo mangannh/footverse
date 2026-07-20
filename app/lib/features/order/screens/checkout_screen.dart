@@ -4,6 +4,12 @@ import 'package:provider/provider.dart';
 
 import '../../../core/error/app_exception.dart';
 import '../../../core/router/app_routes.dart';
+import '../../../core/theme/app_elevation.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/widgets/app_error_state.dart';
+import '../../../core/widgets/app_skeleton.dart';
+import '../../../core/widgets/price_text.dart';
+import '../../../core/widgets/section_header.dart';
 import '../../address/models/address_response.dart';
 import '../../address/repositories/address_repository.dart';
 import '../../cart/models/cart_item_response.dart';
@@ -59,6 +65,13 @@ class _CheckoutView extends StatefulWidget {
 class _CheckoutViewState extends State<_CheckoutView> {
   final TextEditingController _couponController = TextEditingController();
 
+  // Screen-local UI feedback for the coupon field (design/03 §16 "Invalid"
+  // state) — not provider state: it is a transient rendering concern for
+  // this field alone, mirroring the screen-local-state precedent already
+  // established elsewhere (e.g. product-detail's variant selection). The
+  // provider itself still owns the actual applied coupon / preview.
+  String? _couponError;
+
   @override
   void dispose() {
     _couponController.dispose();
@@ -71,22 +84,26 @@ class _CheckoutViewState extends State<_CheckoutView> {
       return;
     }
     final provider = context.read<CheckoutProvider>();
-    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _couponError = null);
     try {
       await provider.applyCoupon(code);
     } on AppException catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text(error.message)));
+      if (mounted) {
+        setState(() => _couponError = error.message);
+      }
     }
   }
 
   Future<void> _clear() async {
     _couponController.clear();
     final provider = context.read<CheckoutProvider>();
-    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _couponError = null);
     try {
       await provider.clearCoupon();
     } on AppException catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text(error.message)));
+      if (mounted) {
+        setState(() => _couponError = error.message);
+      }
     }
   }
 
@@ -153,9 +170,9 @@ class _CheckoutViewState extends State<_CheckoutView> {
   Widget _buildBody(CheckoutProvider provider) {
     switch (provider.status) {
       case CheckoutStatus.loading:
-        return const Center(child: CircularProgressIndicator());
+        return const _CheckoutSkeleton();
       case CheckoutStatus.error:
-        return _ErrorView(
+        return AppErrorState(
           message: provider.error?.message ?? 'Something went wrong',
           onRetry: provider.retry,
         );
@@ -177,36 +194,30 @@ class _CheckoutViewState extends State<_CheckoutView> {
       children: <Widget>[
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppSpacing.md),
             children: <Widget>[
               _ItemsSection(lines: lines),
-              const SizedBox(height: 24),
               _AddressSection(
                 address: provider.selectedAddress,
                 onChange: provider.addresses.isEmpty ? null : _changeAddress,
                 onAdd: _goToAddresses,
               ),
-              const SizedBox(height: 24),
               _PaymentMethodSection(
                 selected: provider.paymentMethod,
                 enabled: !busy,
                 onChanged: provider.selectPaymentMethod,
               ),
-              const SizedBox(height: 24),
               _CouponSection(
                 controller: _couponController,
                 appliedCode: provider.appliedCouponCode,
+                discountAmount: provider.preview?.discountAmount,
+                errorMessage: _couponError,
                 busy: busy,
                 onApply: _apply,
                 onClear: _clear,
               ),
-              const SizedBox(height: 24),
               _NoteField(onChanged: provider.setNote),
-              const SizedBox(height: 24),
-              _SummarySection(
-                preview: provider.preview,
-                previewing: provider.isPreviewing,
-              ),
+              _SummarySection(preview: provider.preview),
             ],
           ),
         ),
@@ -215,6 +226,40 @@ class _CheckoutViewState extends State<_CheckoutView> {
           placing: provider.isPlacing,
           onPlace: _placeOrder,
         ),
+      ],
+    );
+  }
+}
+
+/// The loading state: a plausible approximation of the checkout's sections —
+/// item lines, the address block, and the summary rows (design/03 §25,
+/// design/04 §1.2) — never a centred spinner.
+class _CheckoutSkeleton extends StatelessWidget {
+  const _CheckoutSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      children: const <Widget>[
+        ListTileSkeleton(),
+        ListTileSkeleton(),
+        SizedBox(height: AppSpacing.lg),
+        TextLineSkeleton(widthFactor: 0.4),
+        SizedBox(height: AppSpacing.xs),
+        TextLineSkeleton(widthFactor: 0.7),
+        SizedBox(height: AppSpacing.xs),
+        TextLineSkeleton(widthFactor: 0.9),
+        SizedBox(height: AppSpacing.lg),
+        TextLineSkeleton(widthFactor: 0.3),
+        SizedBox(height: AppSpacing.xs),
+        TextLineSkeleton(widthFactor: 0.5),
+        SizedBox(height: AppSpacing.lg),
+        TextLineSkeleton(widthFactor: 0.6),
+        SizedBox(height: AppSpacing.xs),
+        TextLineSkeleton(widthFactor: 0.6),
+        SizedBox(height: AppSpacing.xs),
+        TextLineSkeleton(widthFactor: 0.6),
       ],
     );
   }
@@ -233,11 +278,10 @@ class _ItemsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('Items (${lines.length})', style: textTheme.titleMedium),
-        const SizedBox(height: 8),
+        SectionHeader(title: 'Items (${lines.length})'),
         for (final line in lines)
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxs),
             child: Row(
               children: <Widget>[
                 Expanded(
@@ -245,10 +289,12 @@ class _ItemsSection extends StatelessWidget {
                     '${line.productName} · ${line.color} · ${line.size} '
                     '× ${line.quantity}',
                     style: textTheme.bodyMedium,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                const SizedBox(width: 8),
-                Text('${line.lineTotal}', style: textTheme.bodyMedium),
+                const SizedBox(width: AppSpacing.xs),
+                PriceText(amount: line.lineTotal),
               ],
             ),
           ),
@@ -277,15 +323,11 @@ class _AddressSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: <Widget>[
-            Text('Shipping address', style: textTheme.titleMedium),
-            if (address != null)
-              TextButton(onPressed: onChange, child: const Text('Change')),
-          ],
+        SectionHeader(
+          title: 'Shipping address',
+          action: address != null ? 'Change' : null,
+          onAction: address != null ? onChange : null,
         ),
-        const SizedBox(height: 4),
         if (address == null)
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -294,7 +336,7 @@ class _AddressSection extends StatelessWidget {
                 'You have no saved address yet.',
                 style: textTheme.bodyMedium,
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.xs),
               FilledButton.tonal(
                 onPressed: onAdd,
                 child: const Text('Add address'),
@@ -305,12 +347,24 @@ class _AddressSection extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text(address.recipientName, style: textTheme.bodyLarge),
-              Text(address.recipientPhone, style: textTheme.bodyMedium),
+              Text(
+                address.recipientName,
+                style: textTheme.bodyLarge,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              Text(
+                address.recipientPhone,
+                style: textTheme.bodyMedium,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
               Text(
                 '${address.streetAddress}, ${address.ward}, '
                 '${address.district}, ${address.province}',
                 style: textTheme.bodyMedium,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
             ],
           ),
@@ -335,11 +389,10 @@ class _PaymentMethodSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('Payment method', style: textTheme.titleMedium),
+        const SectionHeader(title: 'Payment method'),
         RadioGroup<PaymentMethod>(
           groupValue: selected,
           onChanged: (value) {
@@ -367,13 +420,20 @@ class _PaymentMethodSection extends StatelessWidget {
   }
 }
 
-/// The coupon section: a code field with Apply, and — when a coupon is applied —
-/// the applied code with Clear. Both affordances are disabled while a preview or
-/// place is in flight (single-flight).
+/// The coupon section (design/03 §16 — entry and applied-result only; coupon
+/// *browsing* is out of scope, no such endpoint exists). Renders the four
+/// contract states: empty (field + `OutlinedButton` "Apply"), validating
+/// (in-button spinner, field disabled), applied (code, discount via
+/// [PriceText], and a "Remove" action), and invalid (the server's message
+/// beneath the field, with an error icon — never a `SnackBar`, matching a
+/// field-level validation error). Both affordances are disabled while a
+/// preview or place is in flight (single-flight).
 class _CouponSection extends StatelessWidget {
   const _CouponSection({
     required this.controller,
     required this.appliedCode,
+    required this.discountAmount,
+    required this.errorMessage,
     required this.busy,
     required this.onApply,
     required this.onClear,
@@ -381,19 +441,25 @@ class _CouponSection extends StatelessWidget {
 
   final TextEditingController controller;
   final String? appliedCode;
+  final double? discountAmount;
+  final String? errorMessage;
   final bool busy;
   final VoidCallback onApply;
   final VoidCallback onClear;
 
+  static const double _spinnerSize = 16;
+
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     final appliedCode = this.appliedCode;
+    final discountAmount = this.discountAmount;
+    final errorMessage = this.errorMessage;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('Coupon', style: textTheme.titleMedium),
-        const SizedBox(height: 8),
+        const SectionHeader(title: 'Coupon'),
         Row(
           children: <Widget>[
             Expanded(
@@ -406,27 +472,62 @@ class _CouponSection extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 8),
-            FilledButton.tonal(
+            const SizedBox(width: AppSpacing.xs),
+            OutlinedButton(
               onPressed: busy ? null : onApply,
-              child: const Text('Apply'),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(AppSpacing.xxl, AppSpacing.xxl),
+              ),
+              child: busy
+                  ? const SizedBox(
+                      height: _spinnerSize,
+                      width: _spinnerSize,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Apply'),
             ),
           ],
         ),
         if (appliedCode != null)
           Padding(
-            padding: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.only(top: AppSpacing.xs),
             child: Row(
               children: <Widget>[
                 Expanded(
                   child: Text(
-                    'Applied: $appliedCode',
-                    style: textTheme.bodyMedium,
+                    'Code: $appliedCode',
+                    style: theme.textTheme.bodyMedium,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                if (discountAmount != null) PriceText(amount: discountAmount),
+                const SizedBox(width: AppSpacing.xs),
                 TextButton(
                   onPressed: busy ? null : onClear,
-                  child: const Text('Clear'),
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(AppSpacing.xxl, AppSpacing.xxl),
+                  ),
+                  child: const Text('Remove'),
+                ),
+              ],
+            ),
+          ),
+        if (errorMessage != null)
+          Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.xs),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Icon(Icons.error_outline, size: 16, color: colorScheme.error),
+                const SizedBox(width: AppSpacing.xxs),
+                Expanded(
+                  child: Text(
+                    errorMessage,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.error,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -445,82 +546,81 @@ class _NoteField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
-      onChanged: onChanged,
-      maxLength: 500,
-      maxLines: 3,
-      decoration: const InputDecoration(
-        labelText: 'Note (optional)',
-        alignLabelWithHint: true,
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        const SectionHeader(title: 'Note'),
+        TextField(
+          onChanged: onChanged,
+          maxLength: 500,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            labelText: 'Note (optional)',
+            alignLabelWithHint: true,
+          ),
+        ),
+      ],
     );
   }
 }
 
 /// The server-computed checkout summary, rendered exactly as delivered
-/// (dto-spec §1 — the client never computes any of these amounts).
+/// (dto-spec §1 — the client never computes any of these amounts). The total
+/// is the most prominent number on the screen ([PriceVariant.emphasis]).
 class _SummarySection extends StatelessWidget {
-  const _SummarySection({required this.preview, required this.previewing});
+  const _SummarySection({required this.preview});
 
   final CouponPreviewResponse? preview;
-  final bool previewing;
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
     final preview = this.preview;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Row(
-          children: <Widget>[
-            Text('Summary', style: textTheme.titleMedium),
-            if (previewing) ...<Widget>[
-              const SizedBox(width: 8),
-              const SizedBox(
-                height: 14,
-                width: 14,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ],
-          ],
-        ),
-        const SizedBox(height: 8),
+        const SectionHeader(title: 'Summary'),
         if (preview != null) ...<Widget>[
           _SummaryRow(label: 'Subtotal', amount: preview.subtotal),
           _SummaryRow(label: 'Discount', amount: preview.discountAmount),
           _SummaryRow(label: 'Shipping', amount: preview.shippingFee),
           const Divider(),
-          _SummaryRow(label: 'Total', amount: preview.total, emphasize: true),
+          _SummaryRow(
+            label: 'Total',
+            amount: preview.total,
+            variant: PriceVariant.emphasis,
+          ),
         ],
       ],
     );
   }
 }
 
-/// One labelled amount row. [amount] is a server value shown verbatim.
+/// One labelled amount row. [amount] is a server value shown verbatim through
+/// [PriceText].
 class _SummaryRow extends StatelessWidget {
   const _SummaryRow({
     required this.label,
     required this.amount,
-    this.emphasize = false,
+    this.variant = PriceVariant.regular,
   });
 
   final String label;
   final double amount;
-  final bool emphasize;
+  final PriceVariant variant;
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    final style = emphasize ? textTheme.titleMedium : textTheme.bodyMedium;
+    final labelStyle = variant == PriceVariant.emphasis
+        ? textTheme.titleMedium
+        : textTheme.bodyMedium;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxs),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: <Widget>[
-          Text(label, style: style),
-          Text('$amount', style: style),
+          Text(label, style: labelStyle),
+          PriceText(amount: amount, variant: variant),
         ],
       ),
     );
@@ -528,7 +628,9 @@ class _SummaryRow extends StatelessWidget {
 }
 
 /// The bottom Place Order bar. The button is disabled until an address is
-/// selected and no preview / place is in flight; it shows a spinner while placing.
+/// selected and no preview / place is in flight; it shows a spinner while
+/// placing — the reference in-button-spinner implementation, kept unchanged
+/// by the Sprint 14 Checkout task.
 class _PlaceOrderBar extends StatelessWidget {
   const _PlaceOrderBar({
     required this.enabled,
@@ -543,9 +645,12 @@ class _PlaceOrderBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      elevation: 3,
+      elevation: AppElevation.sticky,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
         child: SafeArea(
           top: false,
           child: SizedBox(
@@ -599,32 +704,6 @@ class _AddressPickerSheet extends StatelessWidget {
               ),
             ),
         ],
-      ),
-    );
-  }
-}
-
-/// The full-screen error state with a retry affordance
-/// (flutter-guidelines §Error Handling).
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message, required this.onRetry});
-
-  final String message;
-  final Future<void> Function() onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
-        ),
       ),
     );
   }

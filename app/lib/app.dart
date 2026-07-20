@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
-import 'core/theme/app_colors.dart';
-import 'core/theme/app_typography.dart';
+import 'core/theme/app_theme.dart';
 import 'features/auth/providers/auth_provider.dart';
 import 'features/cart/providers/cart_provider.dart';
 import 'features/wishlist/providers/wishlist_provider.dart';
@@ -42,11 +41,7 @@ class FootVerseApp extends StatelessWidget {
       child: MaterialApp.router(
         title: 'FootVerse',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(seedColor: AppColors.seed),
-          textTheme: AppTypography.textTheme,
-        ),
+        theme: AppTheme.light(),
         routerConfig: router,
       ),
     );

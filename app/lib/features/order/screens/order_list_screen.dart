@@ -3,10 +3,14 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/router/app_routes.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/widgets/app_empty_state.dart';
+import '../../../core/widgets/app_error_state.dart';
+import '../../../core/widgets/app_skeleton.dart';
 import '../../product/widgets/next_page_footer.dart';
 import '../providers/order_list_provider.dart';
 import '../repositories/order_repository.dart';
-import '../widgets/order_summary_tile.dart';
+import '../widgets/order_card.dart';
 
 /// The caller's order history (sprint-8-plan item 06): a paginated,
 /// most-recently-placed-first list. It owns a screen-scoped [OrderListProvider]
@@ -86,22 +90,33 @@ class _OrderListViewState extends State<_OrderListView> {
     }
     return Scaffold(
       appBar: AppBar(title: const Text('My Orders')),
-      body: SafeArea(child: _buildBody(context, provider)),
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: provider.retry,
+          child: _buildBody(context, provider),
+        ),
+      ),
     );
   }
 
   Widget _buildBody(BuildContext context, OrderListProvider provider) {
     switch (provider.status) {
       case OrderListStatus.loading:
-        return const Center(child: CircularProgressIndicator());
+        return const _OrderListSkeleton();
       case OrderListStatus.error:
-        return _ErrorView(
+        return AppErrorState(
           message: provider.error?.message ?? 'Something went wrong',
-          onRetry: context.read<OrderListProvider>().retry,
+          onRetry: provider.retry,
         );
       case OrderListStatus.ready:
         if (provider.isEmpty) {
-          return const _EmptyView();
+          return AppEmptyState(
+            icon: Icons.receipt_long_outlined,
+            title: 'No orders yet',
+            message: 'Orders you place will show up here.',
+            actionLabel: 'Start shopping',
+            onAction: () => context.goNamed(AppRoute.catalog),
+          );
         }
         return _buildList(context, provider);
     }
@@ -113,7 +128,7 @@ class _OrderListViewState extends State<_OrderListView> {
         provider.loadingNextPage || provider.nextPageError != null;
     return ListView.builder(
       controller: _scrollController,
-      padding: const EdgeInsets.only(top: 12, bottom: 12),
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       itemCount: orders.length + (hasFooter ? 1 : 0),
       itemBuilder: (context, index) {
         if (index >= orders.length) {
@@ -124,7 +139,7 @@ class _OrderListViewState extends State<_OrderListView> {
           );
         }
         final order = orders[index];
-        return OrderSummaryTile(
+        return OrderCard(
           order: order,
           onTap: () => context.goNamed(
             AppRoute.orderDetail,
@@ -136,43 +151,23 @@ class _OrderListViewState extends State<_OrderListView> {
   }
 }
 
-/// The full-screen error state with a retry affordance
-/// (flutter-guidelines §Error Handling).
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message, required this.onRetry});
+/// The loading state: a plausible number of [ListTileSkeleton] rows in place
+/// of the eventual order cards (design/03 §25, design/04 §1.2) — never a
+/// centred spinner.
+class _OrderListSkeleton extends StatelessWidget {
+  const _OrderListSkeleton();
 
-  final String message;
-  final Future<void> Function() onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The empty state shown when the caller has placed no orders yet.
-class _EmptyView extends StatelessWidget {
-  const _EmptyView();
+  static const int _rowCount = 5;
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Padding(
-        padding: EdgeInsets.all(24),
-        child: Text('You have no orders yet.'),
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.xs,
       ),
+      itemCount: _rowCount,
+      itemBuilder: (context, index) => const ListTileSkeleton(),
     );
   }
 }

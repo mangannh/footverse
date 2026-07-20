@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/error/app_exception.dart';
+import '../../../core/theme/app_spacing.dart';
 import '../../auth/validators/auth_validators.dart';
 import '../models/change_email_request.dart';
 import '../providers/profile_provider.dart';
@@ -15,15 +16,15 @@ import '../repositories/profile_repository.dart';
 /// [ProfileRepository] (from the composition root, so no widget constructs a
 /// `Dio`) and drives its single-flight `changeEmail` write. The form
 /// pre-validates the frozen constraints (validation-spec §4, via the reused
-/// [AuthValidators]) and the server stays authoritative: a wrong current password
-/// is `400 USER_CURRENT_PASSWORD_INVALID` and a taken email is
-/// `409 USER_EMAIL_DUPLICATED`, each rendered faithfully as a `SnackBar` on this
-/// screen (it never parses the error code). On success it pops back returning
-/// `true`; the profile screen then re-fetches, shows the new email, and shows the
-/// confirmation `SnackBar` on its own stable `ScaffoldMessenger`. The stale-token
-/// consequence is handled transparently by the existing `AuthInterceptor` (no
-/// token logic here). It never persists, logs, or echoes a raw password
-/// (business-rules → Security).
+/// [AuthValidators]) and the server stays authoritative: a wrong current
+/// password is `400 USER_CURRENT_PASSWORD_INVALID` and a taken email is
+/// `409 USER_EMAIL_DUPLICATED`, each rendered as a form-level message above
+/// the submit button (design/04 Task 14 — never a `SnackBar`). On success it
+/// pops back returning `true`; the profile screen then re-fetches, shows the
+/// new email, and shows the confirmation `SnackBar` on its own stable
+/// `ScaffoldMessenger`. The stale-token consequence is handled transparently
+/// by the existing `AuthInterceptor` (no token logic here). It never
+/// persists, logs, or echoes a raw password (business-rules → Security).
 class ChangeEmailScreen extends StatelessWidget {
   const ChangeEmailScreen({required this.profileRepository, super.key});
 
@@ -53,6 +54,10 @@ class _ChangeEmailViewState extends State<_ChangeEmailView> {
   final TextEditingController _currentPasswordController =
       TextEditingController();
 
+  // Screen-local form-level error (design/06 §12; Checkout coupon-error /
+  // Change Password precedent) — not provider state.
+  String? _formError;
+
   @override
   void dispose() {
     _newEmailController.dispose();
@@ -65,8 +70,8 @@ class _ChangeEmailViewState extends State<_ChangeEmailView> {
       return;
     }
     final provider = context.read<ProfileProvider>();
-    final messenger = ScaffoldMessenger.of(context);
     final router = GoRouter.of(context);
+    setState(() => _formError = null);
     final request = ChangeEmailRequest(
       newEmail: _newEmailController.text.trim(),
       currentPassword: _currentPasswordController.text,
@@ -75,18 +80,22 @@ class _ChangeEmailViewState extends State<_ChangeEmailView> {
       await provider.changeEmail(request);
       router.pop(true);
     } on AppException catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text(error.message)));
+      if (mounted) {
+        setState(() => _formError = error.message);
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final isUpdating = context.watch<ProfileProvider>().isUpdating;
+    final colorScheme = Theme.of(context).colorScheme;
+    final formError = _formError;
     return Scaffold(
       appBar: AppBar(title: const Text('Change email')),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.md),
           child: Form(
             key: _formKey,
             child: Column(
@@ -100,7 +109,7 @@ class _ChangeEmailViewState extends State<_ChangeEmailView> {
                   autofillHints: const <String>[AutofillHints.email],
                   validator: AuthValidators.email,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: AppSpacing.md),
                 TextFormField(
                   controller: _currentPasswordController,
                   decoration: const InputDecoration(
@@ -111,7 +120,28 @@ class _ChangeEmailViewState extends State<_ChangeEmailView> {
                   onFieldSubmitted: (_) => _submit(),
                   validator: AuthValidators.requiredPassword,
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: AppSpacing.lg),
+                if (formError != null) ...<Widget>[
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Icon(
+                        Icons.error_outline,
+                        size: 16,
+                        color: colorScheme.error,
+                      ),
+                      const SizedBox(width: AppSpacing.xxs),
+                      Expanded(
+                        child: Text(
+                          formError,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: colorScheme.error),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                ],
                 FilledButton(
                   onPressed: isUpdating ? null : _submit,
                   child: isUpdating

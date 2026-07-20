@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/widgets/app_network_image.dart';
+import '../../../core/widgets/price_text.dart';
 import '../models/order_item_response.dart';
 
 /// One line of an order (dto-spec §15): a thumbnail, the product name, the
@@ -21,20 +24,22 @@ class OrderItemTile extends StatelessWidget {
   /// lines, where no review entry is shown.
   final VoidCallback? onReview;
 
+  static const double _thumbnailSize = 56;
+
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final onReview = this.onReview;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              _Thumbnail(imageUrl: item.productImageUrl),
-              const SizedBox(width: 12),
+              AppNetworkImage(url: item.productImageUrl, width: _thumbnailSize),
+              const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -45,21 +50,31 @@ class OrderItemTile extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: AppSpacing.xxs),
                     Text(
                       '${item.color} · ${item.size}',
                       style: textTheme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${item.unitPrice} × ${item.quantity}',
-                      style: textTheme.bodyMedium,
+                    const SizedBox(height: AppSpacing.xxs),
+                    Row(
+                      children: <Widget>[
+                        PriceText(
+                          amount: item.unitPrice,
+                          variant: PriceVariant.compact,
+                        ),
+                        Text(
+                          ' × ${item.quantity}',
+                          style: textTheme.bodyMedium,
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-              Text('${item.lineTotal}', style: textTheme.titleSmall),
+              const SizedBox(width: AppSpacing.xs),
+              PriceText(amount: item.lineTotal),
             ],
           ),
           if (onReview != null)
@@ -67,57 +82,14 @@ class OrderItemTile extends StatelessWidget {
               alignment: Alignment.centerLeft,
               child: TextButton.icon(
                 onPressed: onReview,
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(AppSpacing.xxl, AppSpacing.xxl),
+                ),
                 icon: const Icon(Icons.rate_review_outlined, size: 18),
                 label: const Text('Review this product'),
               ),
             ),
         ],
-      ),
-    );
-  }
-}
-
-/// The line thumbnail: the product image, or a placeholder when the line has no
-/// image or the image fails to load (mirrors the cart line's thumbnail).
-class _Thumbnail extends StatelessWidget {
-  const _Thumbnail({required this.imageUrl});
-
-  final String? imageUrl;
-
-  static const double _size = 56;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final placeholder = Container(
-      width: _size,
-      height: _size,
-      color: colorScheme.surfaceContainerHighest,
-      child: Icon(
-        Icons.image_not_supported_outlined,
-        color: colorScheme.outline,
-      ),
-    );
-
-    final url = imageUrl;
-    if (url == null || url.isEmpty) {
-      return placeholder;
-    }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: Image.network(
-        url,
-        width: _size,
-        height: _size,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) => placeholder,
-        loadingBuilder: (context, child, progress) => progress == null
-            ? child
-            : const SizedBox(
-                width: _size,
-                height: _size,
-                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-              ),
       ),
     );
   }

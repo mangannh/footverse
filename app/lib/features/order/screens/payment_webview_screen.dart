@@ -7,6 +7,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../../core/config/app_config.dart';
 import '../../../core/error/app_exception.dart';
+import '../../../core/widgets/app_error_state.dart';
 import '../providers/payment_provider.dart';
 import '../repositories/order_repository.dart';
 
@@ -19,9 +20,10 @@ import '../repositories/order_repository.dart';
 /// own. It watches every navigation for [AppConfig.vnpayReturnUrlPrefix]; on a
 /// match it **never reads the URL's query string or infers an outcome** — it
 /// only reloads the order through [PaymentProvider.reloadOrder] and pops back,
-/// leaving the destination screen to render whatever the server said. An
-/// explicit Cancel action pops immediately without reloading, so it never
-/// pretends the payment failed or succeeded.
+/// leaving the destination screen to render whatever the server said. Cancel
+/// requires confirmation (design/04 §4.8 — this screen is high-stakes; an
+/// accidental back gesture mid-payment is costly) and, when confirmed, pops
+/// without reloading, so it never pretends the payment failed or succeeded.
 class PaymentWebViewScreen extends StatelessWidget {
   const PaymentWebViewScreen({
     super.key,
@@ -35,8 +37,15 @@ class PaymentWebViewScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider<PaymentProvider>(
-      create: (_) =>
-          PaymentProvider(orderRepository, orderId)..requestPaymentUrl(),
+      create: (_) {
+        final provider = PaymentProvider(orderRepository, orderId);
+        // Fire-and-forget: the failure is already fully captured in the
+        // provider's own status/error (what the UI renders from) — this
+        // silences the otherwise-unhandled Future rejection without
+        // changing anything observable.
+        unawaited(provider.requestPaymentUrl().catchError((_) {}));
+        return provider;
+      },
       child: const _PaymentWebViewView(),
     );
   }
@@ -75,6 +84,41 @@ class _PaymentWebViewViewState extends State<_PaymentWebViewView> {
     router.pop();
   }
 
+  /// Confirms before leaving the payment flow — an accidental tap or back
+  /// gesture mid-payment is costly (design/04 §4.8). Never renders a payment
+  /// outcome itself: confirming simply pops, leaving the order exactly as the
+  /// server last reported it.
+  Future<void> _confirmCancel(BuildContext context) async {
+    final router = GoRouter.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Cancel payment?'),
+        content: const Text(
+          'Your order will remain unpaid. You can try again later from '
+          'your order details.',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Keep paying'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+              foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Cancel payment'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      router.pop();
+    }
+  }
+
   void _ensureController(String paymentUrl) {
     if (_controller != null) {
       return;
@@ -86,7 +130,13 @@ class _PaymentWebViewViewState extends State<_PaymentWebViewView> {
           onPageStarted: (_) => setState(() => _pageLoading = true),
           onPageFinished: (_) => setState(() => _pageLoading = false),
           onNavigationRequest: (request) {
-            if (request.url.startsWith(AppConfig.vnpayReturnUrlPrefix)) {
+            // Guard against an empty prefix (e.g. VNPAY_RETURN_URL_PREFIX not
+            // supplied via --dart-define): every URL.startsWith('') is true in
+            // Dart, which would otherwise treat the very first load of the
+            // real VNPay payment page as the gateway's return and block it.
+            final String returnUrlPrefix = AppConfig.vnpayReturnUrlPrefix;
+            if (returnUrlPrefix.isNotEmpty &&
+                request.url.startsWith(returnUrlPrefix)) {
               _handleReturnDetected();
               return NavigationDecision.prevent;
             }
@@ -109,7 +159,7 @@ class _PaymentWebViewViewState extends State<_PaymentWebViewView> {
         title: const Text('Payment'),
         actions: <Widget>[
           TextButton(
-            onPressed: () => GoRouter.of(context).pop(),
+            onPressed: () => _confirmCancel(context),
             child: const Text('Cancel'),
           ),
         ],
@@ -121,44 +171,42 @@ class _PaymentWebViewViewState extends State<_PaymentWebViewView> {
   Widget _buildBody(PaymentProvider provider) {
     if (_controller == null) {
       if (provider.status == PaymentFlowStatus.error) {
-        return _ErrorView(
+        return AppErrorState(
           message: provider.error?.message ?? 'Unable to start payment',
-          onClose: () => GoRouter.of(context).pop(),
+          onRetry: provider.requestPaymentUrl,
         );
       }
+      // The one legitimate full-screen spinner exception (design/03 §21):
+      // there is no known shape to skeleton before the gateway URL exists.
       return const Center(child: CircularProgressIndicator());
     }
     return Stack(
       children: <Widget>[
         WebViewWidget(controller: _controller!),
-        if (_pageLoading) const Center(child: CircularProgressIndicator()),
+        // The loading overlay while the gateway's own page navigates — never
+        // a partial or optimistic payment status, just a neutral wait
+        // indicator over the page that is mid-navigation.
+        if (_pageLoading) const _LoadingOverlay(),
       ],
     );
   }
 }
 
-/// The full-screen error state shown only when the initial payment-URL
-/// request fails (flutter-guidelines §Error Handling); it renders the
-/// enveloped message (e.g. `PAYMENT_NOT_APPLICABLE`) exactly as delivered.
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message, required this.onClose});
+/// The loading overlay shown while the WebView navigates between the
+/// gateway's own pages — a dimmed scrim from the theme, not a hardcoded
+/// colour (design/02 §2.3).
+class _LoadingOverlay extends StatelessWidget {
+  const _LoadingOverlay();
 
-  final String message;
-  final VoidCallback onClose;
+  static const double _scrimOpacity = 0.6;
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: onClose, child: const Text('Close')),
-          ],
-        ),
+    final colorScheme = Theme.of(context).colorScheme;
+    return Positioned.fill(
+      child: ColoredBox(
+        color: colorScheme.surface.withValues(alpha: _scrimOpacity),
+        child: const Center(child: CircularProgressIndicator()),
       ),
     );
   }

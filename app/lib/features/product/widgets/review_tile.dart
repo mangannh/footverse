@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/format/app_date_format.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/widgets/app_network_image.dart';
+import '../../../core/widgets/rating_display.dart';
 import '../models/review_response.dart';
 
 /// A single product review (dto-spec §16). Shows the author, rating, comment,
@@ -10,50 +14,61 @@ class ReviewTile extends StatelessWidget {
 
   final ReviewResponse review;
 
-  static String _formatDate(DateTime date) {
-    String two(int value) => value.toString().padLeft(2, '0');
-    return '${date.year}-${two(date.month)}-${two(date.day)}';
-  }
+  static const double _avatarSize = 32;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     final comment = review.comment;
     final isEdited = review.updatedAt != review.createdAt;
+    final metaStyle = theme.textTheme.bodySmall?.copyWith(
+      color: colorScheme.onSurfaceVariant,
+    );
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Row(
             children: <Widget>[
               _Avatar(url: review.userAvatarUrl),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Text(
                   review.userFullName,
                   style: theme.textTheme.titleSmall,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              Icon(Icons.star, size: 16, color: theme.colorScheme.primary),
-              const SizedBox(width: 4),
-              Text('${review.rating}', style: theme.textTheme.bodySmall),
+              const SizedBox(width: AppSpacing.sm),
+              // `reviewCount` intentionally omitted: this is one reviewer's
+              // own rating, not an aggregate — the null-count extension
+              // (design/03 §3, sprint-14-plan Task 07) renders the star and
+              // value alone, with no "(N reviews)" suffix that would not
+              // apply here.
+              RatingDisplay(
+                rating: review.rating.toDouble(),
+                size: RatingSize.small,
+              ),
             ],
           ),
           if (comment != null && comment.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 6),
+            const SizedBox(height: AppSpacing.xxs),
             Text(comment, style: theme.textTheme.bodyMedium),
           ],
-          const SizedBox(height: 4),
+          const SizedBox(height: AppSpacing.xxs),
           Row(
             children: <Widget>[
-              Text(
-                _formatDate(review.createdAt),
-                style: theme.textTheme.bodySmall,
-              ),
+              Text(AppDateFormat.format(review.createdAt), style: metaStyle),
               if (isEdited) ...<Widget>[
-                const SizedBox(width: 8),
-                Text('Edited', style: theme.textTheme.bodySmall),
+                const SizedBox(width: AppSpacing.xs),
+                Text('Edited', style: metaStyle),
               ],
             ],
           ),
@@ -64,6 +79,10 @@ class ReviewTile extends StatelessWidget {
 }
 
 /// The review author's avatar, or a placeholder when they have none.
+/// Circular — the one shape exempted from the rectangles-only rule
+/// (design/02 §8) — via [ClipOval] over [AppNetworkImage], so the avatar
+/// still goes through the shared cache/placeholder/error contract
+/// (design/02 §2.5).
 class _Avatar extends StatelessWidget {
   const _Avatar({required this.url});
 
@@ -71,13 +90,8 @@ class _Avatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final url = this.url;
-    if (url == null || url.isEmpty) {
-      return const CircleAvatar(
-        radius: 16,
-        child: Icon(Icons.person_outline, size: 18),
-      );
-    }
-    return CircleAvatar(radius: 16, backgroundImage: NetworkImage(url));
+    return ClipOval(
+      child: AppNetworkImage(url: url, width: ReviewTile._avatarSize),
+    );
   }
 }

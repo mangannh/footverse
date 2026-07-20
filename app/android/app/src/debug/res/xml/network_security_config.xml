@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only: also trust user-installed CA certificates, in addition to the
+  system store. Some local Android emulator images ship with a stale system
+  CA bundle that predates a gateway's current certificate chain (e.g. the
+  VNPay sandbox, whose chain currently roots at "Sectigo Public Server
+  Authentication Root E46"); this lets a developer install that one missing
+  root locally (Settings > Security > Install a certificate) to unblock the
+  payment WebView without weakening release builds, which keep Android's
+  default system-only trust (this file is not merged into them).
+-->
+<network-security-config>
+    <base-config>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
